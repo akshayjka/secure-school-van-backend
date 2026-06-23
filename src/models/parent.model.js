@@ -1,89 +1,60 @@
 const mongoose = require('mongoose');
 
-const driverSchema = new mongoose.Schema(
-
+const parentSchema = new mongoose.Schema(
 {
-
-  driverId: {
-
+  parentId: {
     type: String,
-
     unique: true
-
   },
 
   role: {
-
     type: String,
-
-    default: 'driver'
-
+    default: 'parent'
   },
 
   name: {
-
     type: String,
-
     required: true,
-
     trim: true
-
   },
+
 
   mobileNumber: {
-
     type: String,
-
     required: true,
-
     unique: true
-
   },
 
-  password: {
 
+
+  studentName: {
     type: String,
-
     required: true
-
   },
 
-  vehicleNumber: {
-
+  schoolName: {
     type: String,
-
     required: true
-
   },
 
-  routeArea: {
-
+  pickupArea: {
     type: String,
-
     required: true
+  },
 
+  dropArea: {
+    type: String,
+    required: true
   },
 
   isVerified: {
-
     type: Boolean,
-
     default: false
-
   }
 
 },
-
 {
-
   timestamps: true
-
 });
 
-module.exports = mongoose.model(
-
-  'Driver',
-
-  driverSchema
-
-);
+module.exports = mongoose.model('Parent', parentSchema);

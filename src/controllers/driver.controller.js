@@ -49,7 +49,41 @@ const getAllDrivers = async (req, res) => {
     }
 };
 
+const addDriver = async(req,res)=>{
+
+try{
+
+ const driver = await driverService.addDriver(req.body);
+
+ return res.status(201).json({
+
+   success:true,
+
+   message:'Driver added successfully',
+
+   data:driver
+
+ });
+
+}
+
+catch(error){
+
+ return res.status(500).json({
+
+   success:false,
+
+   message:error.message
+
+ });
+
+}
+
+}
+
+
 module.exports = {
     registerDriver,
-    getAllDrivers
+    getAllDrivers,
+    addDriver
 };

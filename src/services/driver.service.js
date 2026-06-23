@@ -57,7 +57,17 @@ const getAllDrivers = async () => {
   return drivers;
 };
 
+const addDriver = async(data)=>{
+
+ const driver = new Driver(data);
+
+ return await driver.save();
+
+}
+
+
 module.exports = {
   registerDriver,
-  getAllDrivers
+  getAllDrivers,
+  addDriver
 };

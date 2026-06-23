@@ -8,6 +8,8 @@ const morgan = require('morgan');
 const connectDB = require('./src/config/database');
 
 const driverRoutes = require('./src/routes/driver.routes');
+const parentRoutes = require('./src/routes/parent.routes');
+const authRoutes = require('./src/routes/auth.route');
 
 const app = express();
 
@@ -21,7 +23,13 @@ app.use(morgan('dev'));
 
 app.use(express.json());
 
+// Routes
+
+app.use('/api/auth', authRoutes);
+
 app.use('/api/drivers', driverRoutes);
+
+app.use('/api/parents', parentRoutes);
 
 const PORT = process.env.PORT || 5000;
 

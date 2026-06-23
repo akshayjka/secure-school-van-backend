@@ -13,4 +13,6 @@ router.get(
   driverController.getAllDrivers
 );
 
+router.post('/add',driverController.addDriver);
+
 module.exports = router;
