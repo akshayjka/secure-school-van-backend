@@ -40,13 +40,13 @@ const driverSchema = new mongoose.Schema(
 
   },
 
-  password: {
+password: {
 
-    type: String,
+  type: String,
 
-    required: true
+  default: null
 
-  },
+},
 
   vehicleNumber: {
 
@@ -70,7 +70,28 @@ const driverSchema = new mongoose.Schema(
 
     default: false
 
-  }
+  },
+
+  referralCode: {
+  type: String,
+  unique: true
+},
+
+referredByCode: {
+  type: String,
+  default: null
+},
+
+referredByDriverId: {
+  type: mongoose.Schema.Types.ObjectId,
+  ref: 'Driver',
+  default: null
+},
+
+referralCount: {
+  type: Number,
+  default: 0
+}
 
 },
 

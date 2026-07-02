@@ -1,39 +1,196 @@
-const driverService = require('../services/driver.service');
+const driverService = require(
 
-const registerDriver = async (req, res) => {
+    '../services/driver.service'
+
+);
+
+
+// ================= REGISTER =================
+
+const registerDriver = async (
+
+    req,
+
+    res
+
+) => {
 
     try {
 
-        const response = await driverService.registerDriver(
-            req.body
-        );
+        const response = await
 
-        return res.status(200).json(response);
+            driverService.registerDriver(
 
-    } catch (error) {
+                req.body
 
-        return res.status(500).json({
+            );
 
-            success: false,
+        return res.status(200)
 
-            message: error.message
-        });
+            .json(response);
+
     }
+
+    catch (error) {
+
+        return res.status(500)
+
+            .json({
+
+                success: false,
+
+                message: error.message
+
+            });
+
+    }
+
 };
 
-const getAllDrivers = async (req, res) => {
+
+// ================= GET ALL =================
+
+const getAllDrivers = async (
+
+    req,
+
+    res
+
+) => {
 
     try {
 
-        const drivers = await driverService.getAllDrivers();
+        const drivers = await
+
+            driverService.getAllDrivers();
+
+        return res.status(200)
+
+            .json({
+
+                success: true,
+
+                count: drivers.length,
+
+                data: drivers
+
+            });
+
+    }
+
+    catch (error) {
+
+        return res.status(500)
+
+            .json({
+
+                success: false,
+
+                message: error.message
+
+            });
+
+    }
+
+};
+
+
+// ================= ADD DRIVER =================
+
+const addDriver = async (
+
+    req,
+
+    res
+
+) => {
+
+    try {
+
+        const driver = await
+
+            driverService.addDriver(
+
+                req.body
+
+            );
+
+        return res.status(201)
+
+            .json({
+
+                success: true,
+
+                message:
+
+                    'Driver added successfully',
+
+                data: driver
+
+            });
+
+    }
+
+    catch (error) {
+
+        return res.status(500)
+
+            .json({
+
+                success: false,
+
+                message: error.message
+
+            });
+
+    }
+
+};
+
+
+// =======================Get Dashboard ===================
+
+const getDashboard = async (req, res) => {
+    try {
+        const { driverId } = req.params;
+
+        const response = await
+
+            driverService.getDashboard(
+
+                driverId
+
+            );
+
+        return res.status(200).json(response);
+    }
+
+    catch (error) {
+        return res.status(500)
+
+            .json({
+
+                success: false,
+
+                message: error.message
+
+            });
+
+    }
+
+};
+
+const getDriver = async (req, res) => {
+
+    try {
+
+        const driver = await driverService.getDriver(req.params.id);
 
         return res.status(200).json({
 
             success: true,
 
-            count: drivers.length,
-
-            data: drivers
+            data: driver
 
         });
 
@@ -46,44 +203,128 @@ const getAllDrivers = async (req, res) => {
             message: error.message
 
         });
+
     }
+
 };
 
-const addDriver = async(req,res)=>{
+const updateDriver = async (req, res) => {
 
-try{
+    try {
 
- const driver = await driverService.addDriver(req.body);
+        const driver = await driverService.updateDriver(
+            req.params.id,
+            req.body
+        );
 
- return res.status(201).json({
+        return res.status(200).json({
 
-   success:true,
+            success: true,
 
-   message:'Driver added successfully',
+            message: 'Driver updated successfully',
 
-   data:driver
+            data: driver
 
- });
+        });
 
-}
+    } catch (error) {
 
-catch(error){
+        return res.status(500).json({
 
- return res.status(500).json({
+            success: false,
 
-   success:false,
+            message: error.message
 
-   message:error.message
+        });
 
- });
+    }
 
-}
+};
 
-}
+const deleteDriver = async (req, res) => {
 
+    try {
+
+        await driverService.deleteDriver(req.params.id);
+
+        return res.status(200).json({
+
+            success: true,
+
+            message: 'Driver deleted successfully'
+
+        });
+
+    } catch (error) {
+
+        return res.status(500).json({
+
+            success: false,
+
+            message: error.message
+
+        });
+
+    }
+
+};
+
+const getReferralDetails = async (req, res) => {
+
+  try {
+
+    const data =
+      await driverService.getReferralDetails(
+        req.params.driverId
+      );
+
+    return res.status(200).json({
+
+      success: true,
+
+      data
+
+    });
+
+  }
+
+  catch (error) {
+
+    return res.status(500).json({
+
+      success: false,
+
+      message: error.message
+
+    });
+
+  }
+
+};
+
+const getReferredDrivers = async (req, res) => {
+
+    try {
+
+        const data = await driverService.getReferredDrivers(req.params.driverId);
+
+        return res.status(200).json({ success: true, count: data.length, data });
+    }
+
+    catch (error) {
+
+        return res.status(500).json({ success: false, message: error.message });
+    }
+};
 
 module.exports = {
     registerDriver,
     getAllDrivers,
-    addDriver
+    addDriver,
+    getDashboard,
+    getDriver,
+    updateDriver,
+    deleteDriver,
+    getReferralDetails,
+    getReferredDrivers
 };
