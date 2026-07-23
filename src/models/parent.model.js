@@ -26,10 +26,16 @@ const parentSchema = new mongoose.Schema({
     type: Boolean,
     default: false
   },
-  isPresent: {
-  type: Boolean,
-  default: true
+  attendanceStatus: {
+  type: String,
+  enum: [
+    'waiting',
+    'picked_up',
+    'dropped'
+  ],
+  default: 'waiting'
 },
+
 
   name: {
     type: String,

@@ -18,12 +18,26 @@ const rideSchema = new mongoose.Schema({
         default: 'started'
     },
 
-    startTime: {
-        type: Date
+    startTime: Date,
+
+    endTime: Date,
+
+    startLocation: {
+
+        name: String,
+
+        latitude: Number,
+
+        longitude: Number
     },
 
-    endTime: {
-        type: Date
+    endLocation: {
+
+        name: String,
+
+        latitude: Number,
+
+        longitude: Number
     },
 
     currentLatitude: Number,
@@ -31,20 +45,20 @@ const rideSchema = new mongoose.Schema({
     currentLongitude: Number,
 
     locations: [
-
         {
             latitude: Number,
             longitude: Number,
             timestamp: Date
         }
-
     ]
 
-}, {
+},
+{
     timestamps: true
 });
 
-module.exports = mongoose.model(
-    'Ride',
-    rideSchema
-);
+module.exports =
+    mongoose.model(
+        'Ride',
+        rideSchema
+    );

@@ -22,7 +22,8 @@ const addParent = async (data) => {
   }
 
   const count = await Parent.countDocuments();
-  const parentId = `PAR${String(count + 1).padStart(6, '0')}`;
+  // const parentId = `PAR${String(count + 1).padStart(6, '0')}`;
+  const parentId = `PAR${Date.now()}`;
 
   const parent = await Parent.create({
     ...data,
@@ -65,9 +66,10 @@ exports.getDashboard = async (parentId) => {
     driverId: parent.driverId
   });
 
-  const ride = await Ride.findOne({
-    driverId: parent.driverId
-  });
+const ride = await Ride.findOne({
+  driverId: parent.driverId,
+  status: 'started'
+});
 
   return {
     studentName: parent.studentName,
@@ -81,20 +83,21 @@ exports.getDashboard = async (parentId) => {
       mobileNumber: driver.mobileNumber
     } : null,
 
-    rideStarted: ride?.rideStarted || false,
+    // rideStarted: ride?.status === 'started',
+      rideStarted: !!ride,
 
-    isPresent: parent.isPresent
+    attendance: parent.attendance
   };
 };
 
 exports.updateAttendance = async (
   parentId,
-  isPresent
+  attendance
 ) => {
 
   const parent = await Parent.findOneAndUpdate(
     { parentId },
-    { isPresent },
+    { attendance },
     { new: true }
   );
 
@@ -105,10 +108,55 @@ exports.updateAttendance = async (
   return parent;
 };
 
+const pickupStudent = async (parentId) => {
+
+  return await Parent.findOneAndUpdate(
+    { parentId },
+    {
+      attendanceStatus: 'picked_up'
+    },
+    { new: true }
+  );
+
+};
+
+const dropStudent = async (parentId) => {
+
+  return await Parent.findOneAndUpdate(
+    { parentId },
+    {
+      attendanceStatus: 'dropped'
+    },
+    { new: true }
+  );
+
+};
+
+// exports.getProfile = async (
+//   parentId
+// ) => {
+
+//   const parent =
+//     await Parent.findOne(
+//       { parentId }
+//     );
+
+//   if (!parent) {
+//     throw new Error(
+//       'Parent not found'
+//     );
+//   }
+
+//   return parent;
+
+// };
+
 module.exports = {
- addParent,
+  addParent,
   getAllParents,
   getParent,
   updateParent,
-  deleteParent
+  deleteParent,
+  getDashboard: exports.getDashboard,
+  updateAttendance: exports.updateAttendance
 };

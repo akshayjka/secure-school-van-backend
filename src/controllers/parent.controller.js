@@ -154,12 +154,12 @@ const updateAttendance = async (req, res) => {
 
     const {
       parentId,
-      isPresent
+      attendance
     } = req.body;
 
     await parentService.updateAttendance(
       parentId,
-      isPresent
+      attendance
     );
 
     res.status(200).json({
@@ -177,6 +177,33 @@ const updateAttendance = async (req, res) => {
   }
 
 };
+
+// const getProfile = async (req, res) => {
+
+//   try {
+
+//     const { parentId } = req.params;
+
+//     const parent =
+//       await parentService.getProfile(
+//         parentId
+//       );
+
+//     return res.status(200).json({
+//       success: true,
+//       parent
+//     });
+
+//   } catch (error) {
+
+//     return res.status(500).json({
+//       success: false,
+//       message: error.message
+//     });
+
+//   }
+
+// };
 
 
 module.exports = {

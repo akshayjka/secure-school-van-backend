@@ -35,6 +35,12 @@ app.use('/api/parents', parentRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/rides',rideRoutes);
 
+app.get('/', (req, res) => {
+  res.status(200).json({
+    success: true,
+    message: 'Secure School Van API is running'
+  });
+});
 
 const PORT = process.env.PORT || 5000;
 

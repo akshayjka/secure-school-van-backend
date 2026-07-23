@@ -1,21 +1,19 @@
 const Ride = require('../models/ride.model');
 exports.startRide = async (driverId) => {
 
-  let ride = await Ride.findOne({
-    driverId
-  });
+  let ride = await Ride.findOne({ driverId });
 
   if (!ride) {
 
     ride = await Ride.create({
       driverId,
-      rideStarted: true,
+      status: 'started',
       startTime: new Date()
     });
 
   } else {
 
-    ride.rideStarted = true;
+    ride.status = 'started';
     ride.startTime = new Date();
 
     await ride.save();
@@ -33,7 +31,7 @@ exports.endRide = async (driverId) => {
     throw new Error('Ride not found');
   }
 
-  ride.rideStarted = false;
+  ride.status = 'ended';
   ride.endTime = new Date();
 
   await ride.save();

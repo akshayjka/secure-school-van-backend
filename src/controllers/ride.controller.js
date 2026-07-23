@@ -9,26 +9,25 @@ const rideService = require('../services/ride.service');
 // } =
 //     require('../services/notification.service');
 
+const SCHOOL_LOCATION = {
+    name:   'Lisieux Matriculation School',
+    latitude:  11.0168,
+    longitude:  76.9558
+};
+
 exports.startRide = async (req, res) => {
 
     try {
 
         const { driverId } = req.body;
-
-        const existingRide =
-            await Ride.findOne({ driverId, status: 'started' });
-
+        const existingRide = await Ride.findOne({ driverId, status: 'started' });
         if (existingRide) {
             return res.status(400).json({ success: false, message: 'Ride already active' });
         }
 
-        const rideCount =
-            await Ride.countDocuments();
-        const rideId =
-            `RIDE${String(rideCount + 1).padStart(6, '0')}`;
-
+        const rideCount = await Ride.countDocuments();
+        const rideId = `RIDE${String(rideCount + 1).padStart(6, '0')}`;
         const ride = await Ride.create({ rideId, driverId, status: 'started', startTime: new Date(), locations: [] });
-
         res.status(201).json({ success: true, message: 'Ride started', ride });
     }
 
@@ -110,13 +109,25 @@ exports.getLiveLocation =
             }
 
             return res.json({
-                success: true,
-                latitude:
-                    ride.currentLatitude,
-                longitude:
-                    ride.currentLongitude,
-                startTime:
-                    ride.startTime
+              success: true,
+
+    latitude:
+        ride.currentLatitude,
+
+    longitude:
+        ride.currentLongitude,
+
+    startTime:
+        ride.startTime,
+
+    schoolName:
+        ride.schoolName,
+
+    schoolLatitude:
+        ride.schoolLatitude,
+
+    schoolLongitude:
+        ride.schoolLongitude
             });
 
         }
