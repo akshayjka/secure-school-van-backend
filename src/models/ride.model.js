@@ -1,43 +1,57 @@
 const mongoose = require('mongoose');
 
-const rideSchema = new mongoose.Schema({
+const rideSchema = new mongoose.Schema(
+  {
 
     rideId: {
-        type: String,
-        unique: true
+      type: String,
+      unique: true
     },
 
     driverId: {
-        type: String,
-        required: true
+      type: String,
+      required: true
+    },
+
+    // NEW
+    rideType: {
+      type: String,
+      enum: ['morning', 'evening'],
+      required: true
     },
 
     status: {
-        type: String,
-        enum: ['started', 'ended'],
-        default: 'started'
+      type: String,
+      enum: ['started', 'ended'],
+      default: 'started'
     },
 
-    startTime: Date,
+    startTime: {
+      type: Date
+    },
 
-    endTime: Date,
+    endTime: {
+      type: Date
+    },
 
     startLocation: {
 
-        name: String,
+      name: String,
 
-        latitude: Number,
+      latitude: Number,
 
-        longitude: Number
+      longitude: Number
+
     },
 
     endLocation: {
 
-        name: String,
+      name: String,
 
-        latitude: Number,
+      latitude: Number,
 
-        longitude: Number
+      longitude: Number
+
     },
 
     currentLatitude: Number,
@@ -45,20 +59,27 @@ const rideSchema = new mongoose.Schema({
     currentLongitude: Number,
 
     locations: [
-        {
-            latitude: Number,
-            longitude: Number,
-            timestamp: Date
+      {
+
+        latitude: Number,
+
+        longitude: Number,
+
+        timestamp: {
+          type: Date,
+          default: Date.now
         }
+
+      }
     ]
 
-},
-{
+  },
+  {
     timestamps: true
-});
+  }
+);
 
-module.exports =
-    mongoose.model(
-        'Ride',
-        rideSchema
-    );
+module.exports = mongoose.model(
+  'Ride',
+  rideSchema
+);

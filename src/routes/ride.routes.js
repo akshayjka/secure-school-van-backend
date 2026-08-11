@@ -23,29 +23,48 @@ router.post(
 );
 
 router.get(
-    '/live/:driverId',
-    rideController.getLiveLocation
+  '/live/:driverId/:rideType',
+  rideController.getLiveLocation
 );
 
+// router.get(
+//   '/live/:driverId/:rideType',
+//   rideController.getLiveLocation
+// );
+
+// router.post(
+//   '/start',
+//   rideController.startRide
+// );
+
+// router.post(
+//   '/end',
+//   rideController.endRide
+// );
+
 router.get(
-  '/status/:driverId',
+  '/status/:driverId/:rideType',
   rideController.getRideStatus
 );
 
-router.post(
-  '/start',
-  rideController.startRide
+router.put(
+  '/pick-student-morning',
+  rideController.pickStudentMorning
 );
 
-router.post(
-  '/end',
-  rideController.endRide
+router.put(
+  '/drop-student-school',
+  rideController.dropStudentSchool
 );
 
-router.get(
-  '/status/:driverId',
-  rideController.getRideStatus
+router.put(
+  '/pick-student-school',
+  rideController.pickStudentFromSchool
 );
 
+router.put(
+  '/drop-student-home',
+  rideController.dropStudentHome
+);
 
 module.exports = router;

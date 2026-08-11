@@ -1,13 +1,17 @@
 const Driver = require('../models/driver.model');
-
 const Parent = require('../models/parent.model');
+
+/**
+ * =====================================================
+ * DASHBOARD
+ * =====================================================
+ */
 
 exports.dashboard = async (req, res) => {
 
   try {
 
     const totalDrivers = await Driver.countDocuments();
-
     const totalParents = await Parent.countDocuments();
 
     res.json({
@@ -36,125 +40,276 @@ exports.dashboard = async (req, res) => {
 
 };
 
-
-// Drivers
+/**
+ * =====================================================
+ * DRIVERS
+ * =====================================================
+ */
 
 exports.getDrivers = async (req, res) => {
+
+  try {
 
     const drivers = await Driver.find();
 
     res.json({
 
-        success: true,
+      success: true,
 
-        data: drivers
+      data: drivers
 
     });
+
+  }
+
+  catch (error) {
+
+    res.status(500).json({
+
+      success: false,
+
+      message: error.message
+
+    });
+
+  }
 
 };
 
 exports.getDriver = async (req, res) => {
 
+  try {
+
     const driver = await Driver.findById(req.params.id);
 
     res.json({
 
-        success: true,
+      success: true,
 
-        data: driver
+      data: driver
 
     });
 
-};
+  }
 
+  catch (error) {
+
+    res.status(500).json({
+
+      success: false,
+
+      message: error.message
+
+    });
+
+  }
+
+};
 
 exports.updateDriver = async (req, res) => {
 
+  try {
+
     const driver = await Driver.findByIdAndUpdate(
 
-        req.params.id,
+      req.params.id,
 
-        req.body,
+      req.body,
 
-        {
+      {
 
-            new: true
+        new: true
 
-        }
+      }
 
     );
 
     res.json({
 
-        success: true,
+      success: true,
 
-        data: driver
+      data: driver
 
     });
 
+  }
+
+  catch (error) {
+
+    res.status(500).json({
+
+      success: false,
+
+      message: error.message
+
+    });
+
+  }
+
 };
-
-
 
 exports.deleteDriver = async (req, res) => {
 
-    await Driver.findByIdAndDelete(
+  try {
 
-        req.params.id
-
-    );
+    await Driver.findByIdAndDelete(req.params.id);
 
     res.json({
 
-        success: true,
+      success: true,
 
-        message: 'Driver Deleted'
+      message: 'Driver Deleted'
 
     });
 
+  }
+
+  catch (error) {
+
+    res.status(500).json({
+
+      success: false,
+
+      message: error.message
+
+    });
+
+  }
+
 };
 
-
-// Parents
+/**
+ * =====================================================
+ * PARENTS
+ * =====================================================
+ */
 
 exports.getParents = async (req, res) => {
 
-  const parents = await Parent.find();
+  try {
 
-  res.json(parents);
+    const parents = await Parent.find();
+
+    res.json({
+
+      success: true,
+
+      data: parents
+
+    });
+
+  }
+
+  catch (error) {
+
+    res.status(500).json({
+
+      success: false,
+
+      message: error.message
+
+    });
+
+  }
 
 };
-
 
 exports.updateParent = async (req, res) => {
 
-  const parent = await Parent.findByIdAndUpdate(
+  try {
 
-    req.params.id,
+    const parent = await Parent.findByIdAndUpdate(
 
-    req.body,
+      req.params.id,
 
-    { new: true }
+      req.body,
 
-  );
+      {
 
-  res.json(parent);
+        new: true
+
+      }
+
+    );
+
+    /**
+     * Notify this parent dashboard
+     */
+
+    if (parent) {
+
+      const io = req.app.get('io');
+
+      io.to(parent.parentId).emit(
+
+        'dashboardUpdated',
+
+        {
+
+          type: 'driver_assignment_updated',
+
+          parentId: parent.parentId,
+
+          driverId: parent.driverId
+
+        }
+
+      );
+
+    }
+
+    res.json({
+
+      success: true,
+
+      message: 'Parent updated successfully',
+
+      data: parent
+
+    });
+
+  }
+
+  catch (error) {
+
+    res.status(500).json({
+
+      success: false,
+
+      message: error.message
+
+    });
+
+  }
 
 };
 
-
 exports.deleteParent = async (req, res) => {
 
-  await Parent.findByIdAndDelete(
+  try {
 
-    req.params.id
+    await Parent.findByIdAndDelete(req.params.id);
 
-  );
+    res.json({
 
-  res.json({
+      success: true,
 
-    success: true
+      message: 'Parent Deleted'
 
-  });
+    });
+
+  }
+
+  catch (error) {
+
+    res.status(500).json({
+
+      success: false,
+
+      message: error.message
+
+    });
+
+  }
 
 };
