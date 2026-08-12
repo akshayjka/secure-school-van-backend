@@ -755,10 +755,11 @@ const saveMonthlyAttendance = async (
     // ==========================================
 
     emitAttendanceUpdated(
-      io,
-      result.parent,
-      result.year,
-      result.month
+    io,
+  result.parent,
+  result.year,
+  result.month,
+  result.records
     );
 
     // ==========================================
@@ -900,30 +901,109 @@ const emitAttendanceUpdated = (
   io,
   parent,
   year,
-  month
+  month,
+  records = []
 ) => {
 
   if (!io || !parent) {
     return;
   }
 
-  // IMPORTANT:
-  // Use application parentId consistently
-  const parentId = parent.parentId;
+
+  const parentId =
+    parent.parentId;
+
+  const driverId =
+    parent.driverId;
+
+
+  // =====================================================
+  // FIND TODAY'S ATTENDANCE
+  // =====================================================
+
+  const today =
+    new Date();
+
+  const todayRecord =
+    records.find(record => {
+
+      const recordDate =
+        new Date(record.date);
+
+      return (
+        recordDate.getFullYear() ===
+          today.getFullYear() &&
+
+        recordDate.getMonth() ===
+          today.getMonth() &&
+
+        recordDate.getDate() ===
+          today.getDate()
+      );
+
+    });
+
+
+  /*
+   * Attendance collection stores:
+   *
+   * present
+   * absent
+   *
+   * Convert that into boolean because
+   * Driver Dashboard currently uses:
+   *
+   * student.attendance === true
+   */
+
+  const attendance =
+    todayRecord
+      ? todayRecord.status === 'present'
+      : parent.attendance;
+
+
+  // =====================================================
+  // SOCKET PAYLOAD
+  // =====================================================
 
   const payload = {
+
     parentId,
-    year: Number(year),
-    month: Number(month),
-    studentName: parent.studentName
+
+    driverId,
+
+    studentName:
+      parent.studentName,
+
+    attendance,
+
+    status:
+      attendance
+        ? 'present'
+        : 'absent',
+
+    date:
+      today.toISOString(),
+
+    year:
+      Number(year),
+
+    month:
+      Number(month)
+
   };
+
 
   console.log(
     '📅 Broadcasting attendanceUpdated:',
     payload
   );
 
-  // Parent-specific room
+
+  // =====================================================
+  // PARENT ATTENDANCE ROOM
+  // =====================================================
+
   io.to(
     `parent_attendance_${parentId}`
   ).emit(
@@ -931,11 +1011,42 @@ const emitAttendanceUpdated = (
     payload
   );
 
-  // All admins
-  io.to('admins').emit(
-    'attendanceUpdated',
-    payload
-  );
+
+  // =====================================================
+  // ADMIN ROOM
+  // =====================================================
+
+  io.to('admins')
+    .emit(
+      'attendanceUpdated',
+      payload
+    );
+
+
+  // =====================================================
+  // DRIVER CHANNEL
+  // =====================================================
+
+  if (driverId) {
+
+    const driverChannel =
+      `driver_${driverId}`;
+
+
+    console.log(
+      `🚌 Sending attendance update to ${driverChannel}`
+    );
+
+
+    io.to(
+      driverChannel
+    ).emit(
+      'attendanceUpdated',
+      payload
+    );
+
+  }
+
 };
 
 module.exports = {
