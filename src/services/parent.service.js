@@ -99,98 +99,288 @@ const deleteParent = async (id) => {
 /**
  * Parent Dashboard
  */
+const getStartOfToday = () => {
+
+  const now = new Date();
+
+  return new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate()
+  );
+
+};
+
+const getEndOfToday = () => {
+
+  const start = getStartOfToday();
+
+  const end = new Date(start);
+
+  end.setDate(
+    end.getDate() + 1
+  );
+
+  return end;
+
+};
+
 const getDashboard = async (parentId) => {
 
-  const parent = await Parent.findOne({ parentId });
+  const parent =
+    await Parent.findOne({
+      parentId
+    });
 
   if (!parent) {
     throw new Error('Parent not found');
   }
 
-  const driver = await Driver.findOne({
-    driverId: parent.driverId
-  });
+  const driver =
+    await Driver.findOne({
+      driverId: parent.driverId
+    });
 
-  /**
-   * Active Morning Ride
-   */
-  const morningRide = await Ride.findOne({
+  // =====================================================
+  // TODAY'S ATTENDANCE
+  // =====================================================
 
-    driverId: parent.driverId,
+  const todayStart =
+    getStartOfToday();
 
-    rideType: 'morning',
+  const todayEnd =
+    getEndOfToday();
 
-    status: 'started'
+  const todayAttendance =
+    await Attendance.findOne({
 
-  });
+      parentId: parent.parentId,
 
-  /**
-   * Active Evening Ride
-   */
+      date: {
+        $gte: todayStart,
+        $lt: todayEnd
+      }
 
-  const eveningRide = await Ride.findOne({
+    }).sort({
+      date: -1
+    });
 
-    driverId: parent.driverId,
+  const todayAttendanceStatus =
+    todayAttendance?.status ||
+    'not_marked';
 
-    rideType: 'evening',
+  const isPresent =
+    todayAttendanceStatus === 'present';
 
-    status: 'started'
+  // =====================================================
+  // ACTIVE RIDES
+  // =====================================================
 
-  });
+  const morningRide =
+    await Ride.findOne({
 
-  let rideStarted = false;
+      driverId: parent.driverId,
 
-  let rideType = null;
+      rideType: 'morning',
 
-  /**
-   * Parent Tracking Logic
-   */
+      status: 'started'
+
+    }).sort({
+      createdAt: -1
+    });
+
+  const eveningRide =
+    await Ride.findOne({
+
+      driverId: parent.driverId,
+
+      rideType: 'evening',
+
+      status: 'started'
+
+    }).sort({
+      createdAt: -1
+    });
+
+  let activeRide = null;
 
   if (morningRide) {
 
-    rideType = 'morning';
+    activeRide = morningRide;
 
-    rideStarted = !!morningRide;
+  } else if (eveningRide) {
+
+    activeRide = eveningRide;
+
   }
 
-  else if (eveningRide) {
+  const rideStarted =
+    !!activeRide;
 
-    rideType = 'evening';
+  const rideType =
+    activeRide?.rideType || null;
 
-    rideStarted = !!eveningRide;
+  // =====================================================
+  // STUDENT STATUS
+  // =====================================================
+
+  let studentStatus = 'waiting';
+
+  if (rideType === 'morning') {
+
+    studentStatus =
+      parent.morningStatus || 'waiting';
+
+  }
+
+  else if (rideType === 'evening') {
+
+    studentStatus =
+      parent.eveningStatus ||
+      'waiting_school_finish';
+
+  }
+
+  // =====================================================
+  // TRACKING ACCESS
+  //
+  // ONLY WHILE STUDENT IS INSIDE VAN
+  // =====================================================
+
+  let trackingAvailable = false;
+
+  if (
+    rideType === 'morning' &&
+    studentStatus === 'picked_up'
+  ) {
+
+    trackingAvailable = true;
+
+  }
+
+  if (
+    rideType === 'evening' &&
+    studentStatus ===
+      'picked_from_school'
+  ) {
+
+    trackingAvailable = true;
+
+  }
+
+  // =====================================================
+  // RIDE MESSAGE
+  // =====================================================
+
+  let rideDirection = null;
+
+  let rideMessageTitle =
+    'No Active Ride';
+
+  let rideMessage =
+    'The school van is not currently on a trip.';
+
+  if (rideType === 'morning') {
+
+    rideDirection =
+      'to_school';
+
+    rideMessageTitle =
+      'School Trip Started';
+
+    rideMessage =
+      'The van is taking students to school.';
+
+  }
+
+  else if (rideType === 'evening') {
+
+    rideDirection =
+      'to_home';
+
+    rideMessageTitle =
+      'Return Trip Started';
+
+    rideMessage =
+      'The van is bringing students home.';
 
   }
 
   return {
 
-    studentName: parent.studentName,
+    studentName:
+      parent.studentName,
 
-    schoolName: parent.schoolName,
+    schoolName:
+      parent.schoolName,
 
-    pickupArea: parent.pickupArea,
+    pickupArea:
+      parent.pickupArea,
 
-    dropArea: parent.dropArea,
+    dropArea:
+      parent.dropArea,
 
-    attendance: parent.attendance,
+    // =================================================
+    // ATTENDANCE
+    // =================================================
 
-    morningStatus: parent.morningStatus,
+    attendance:
+      isPresent,
 
-    eveningStatus: parent.eveningStatus,
+    todayAttendanceStatus,
+
+    todayAttendanceDate:
+      todayAttendance?.date || null,
+
+    // =================================================
+    // STUDENT RIDE STATUS
+    // =================================================
+
+    morningStatus:
+      parent.morningStatus,
+
+    eveningStatus:
+      parent.eveningStatus,
+
+    studentStatus,
+
+    // =================================================
+    // RIDE
+    // =================================================
 
     rideStarted,
 
     rideType,
 
+    rideDirection,
+
+    rideMessageTitle,
+
+    rideMessage,
+
+    // =================================================
+    // TRACKING
+    // =================================================
+
+    trackingAvailable,
+
+    // =================================================
+    // DRIVER
+    // =================================================
+
     driver: driver
       ? {
 
-        driverId: driver.driverId,
+          driverId:
+            driver.driverId,
 
-        name: driver.name,
+          name:
+            driver.name,
 
-        mobileNumber: driver.mobileNumber
+          mobileNumber:
+            driver.mobileNumber
 
-      }
+        }
       : null
 
   };

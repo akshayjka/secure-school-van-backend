@@ -2,64 +2,58 @@ const Ride = require('../models/ride.model');
 const Parent = require('../models/parent.model');
 
 /**
- * Start Ride
- * rideType = morning | evening
+ * =====================================================
+ * TODAY RANGE
+ * =====================================================
  */
-exports.startRide = async (driverId, rideType) => {
 
-  // Only one active ride of same type
-  const activeRide = await Ride.findOne({
-    driverId,
-    rideType,
-    status: 'started'
-  });
+const getTodayRange = () => {
 
-  if (activeRide) {
-    throw new Error(`${rideType} ride already started`);
-  }
+  const start = new Date();
 
-  const rideCount = await Ride.countDocuments();
+  start.setHours(0, 0, 0, 0);
 
-  const ride = await Ride.create({
+  const end = new Date(start);
 
-    rideId: `RIDE${String(rideCount + 1).padStart(6, '0')}`,
+  end.setDate(end.getDate() + 1);
 
-    driverId,
+  return {
+    start,
+    end
+  };
 
-    rideType,
+};
 
-    status: 'started',
+  const ensureActiveRide = async (
+  driverId,
+  rideType
+) => {
 
-    startTime: new Date(),
+  const {
+    start,
+    end
+  } = getTodayRange();
 
-    locations: []
+  const ride =
+    await Ride.findOne({
 
-  });
+      driverId,
 
-  // Reset student status whenever a ride starts
+      rideType,
 
-  if (rideType === 'morning') {
+      status: 'started',
 
-    await Parent.updateMany(
-      {
-        driverId,
-        attendance: true
-      },
-      {
-        morningStatus: 'waiting'
+      createdAt: {
+        $gte: start,
+        $lt: end
       }
-    );
 
-  } else {
+    });
 
-    await Parent.updateMany(
-      {
-        driverId,
-        attendance: true
-      },
-      {
-        eveningStatus: 'waiting_school_finish'
-      }
+  if (!ride) {
+
+    throw new Error(
+      'Ride must be started before picking up students'
     );
 
   }
@@ -69,22 +63,176 @@ exports.startRide = async (driverId, rideType) => {
 };
 
 /**
- * End Ride
+ * =====================================================
+ * START RIDE
+ * =====================================================
+ *
+ * IMPORTANT:
+ *
+ * Ride is created ONLY when the driver explicitly
+ * presses START RIDE.
+ *
+ * =====================================================
  */
-exports.endRide = async (driverId, rideType) => {
 
-  const ride = await Ride.findOne({
+exports.startRide = async (
+  driverId,
+  rideType
+) => {
 
-    driverId,
+  const {
+    start,
+    end
+  } = getTodayRange();
 
-    rideType,
+  // =====================================================
+  // CHECK TODAY'S ACTIVE RIDE
+  // =====================================================
 
-    status: 'started'
+  const activeRide =
+    await Ride.findOne({
 
-  });
+      driverId,
+
+      rideType,
+
+      status: 'started',
+
+      createdAt: {
+        $gte: start,
+        $lt: end
+      }
+
+    }).sort({
+      createdAt: -1
+    });
+
+  // =====================================================
+  // ALREADY STARTED
+  // =====================================================
+
+  if (activeRide) {
+
+    console.log(
+      `Ride already active: ${activeRide.rideId}`
+    );
+
+    return {
+      ride: activeRide,
+      alreadyStarted: true
+    };
+
+  }
+
+  // =====================================================
+  // CREATE NEW RIDE
+  // =====================================================
+
+  const rideCount =
+    await Ride.countDocuments();
+
+  const ride =
+    await Ride.create({
+
+      rideId:
+        `RIDE${String(
+          rideCount + 1
+        ).padStart(6, '0')}`,
+
+      driverId,
+
+      rideType,
+
+      // IMPORTANT:
+      // This is the ONLY place where a ride
+      // becomes started.
+      status: 'started',
+
+      startTime: new Date(),
+
+      locations: []
+
+    });
+
+  // =====================================================
+  // RESET STUDENT WORKFLOW
+  // =====================================================
+
+  if (rideType === 'morning') {
+
+    await Parent.updateMany(
+
+      {
+        driverId,
+        attendance: true
+      },
+
+      {
+        morningStatus: 'waiting'
+      }
+
+    );
+
+  } else {
+
+    await Parent.updateMany(
+
+      {
+        driverId,
+        attendance: true
+      },
+
+      {
+        eveningStatus: 'waiting_school_finish'
+      }
+
+    );
+
+  }
+
+  return {
+    ride,
+    alreadyStarted: false
+  };
+
+};
+
+/**
+ * =====================================================
+ * END RIDE
+ * =====================================================
+ */
+
+exports.endRide = async (
+  driverId,
+  rideType
+) => {
+
+  const {
+    start,
+    end
+  } = getTodayRange();
+
+  const ride =
+    await Ride.findOne({
+
+      driverId,
+
+      rideType,
+
+      status: 'started',
+
+      createdAt: {
+        $gte: start,
+        $lt: end
+      }
+
+    });
 
   if (!ride) {
-    throw new Error('Ride not found');
+    throw new Error(
+      'No active ride found for today'
+    );
   }
 
   ride.status = 'ended';
@@ -98,180 +246,134 @@ exports.endRide = async (driverId, rideType) => {
 };
 
 /**
- * Driver picks student from home
+ * =====================================================
+ * GET RIDE STATUS
+ * =====================================================
  */
-exports.pickStudentMorning = async (parentId) => {
 
-  const parent = await Parent.findOneAndUpdate(
+exports.getRideStatus = async (
+  driverId,
+  rideType,
+  parentId = null
+) => {
 
-    {
-      parentId
-    },
+  const {
+    start,
+    end
+  } = getTodayRange();
 
-    {
-      morningStatus: 'picked_up'
-    },
+  const ride =
+    await Ride.findOne({
 
-    {
-      new: true
+      driverId,
+
+      rideType,
+
+      status: 'started',
+
+      createdAt: {
+        $gte: start,
+        $lt: end
+      }
+
+    }).sort({
+      createdAt: -1
+    });
+
+  let studentStatus = null;
+
+  let trackingAvailable = false;
+
+  if (parentId) {
+
+    const parent =
+      await Parent.findOne({
+        parentId,
+        driverId
+      });
+
+    if (parent) {
+
+      studentStatus =
+        rideType === 'morning'
+          ? parent.morningStatus
+          : parent.eveningStatus;
+
+      trackingAvailable =
+        rideType === 'morning'
+          ? studentStatus === 'picked_up'
+          : studentStatus === 'picked_from_school';
+
     }
 
-  );
-
-  if (!parent) {
-    throw new Error('Parent not found');
   }
-
-  return parent;
-
-};
-
-/**
- * Driver drops student at school
- */
-exports.dropStudentSchool = async (parentId) => {
-
-  const parent = await Parent.findOneAndUpdate(
-
-    {
-      parentId
-    },
-
-    {
-      morningStatus: 'dropped_at_school'
-    },
-
-    {
-      new: true
-    }
-
-  );
-
-  if (!parent) {
-    throw new Error('Parent not found');
-  }
-
-  return parent;
-
-};
-
-/**
- * Driver picks student from school
- */
-exports.pickStudentFromSchool = async (parentId) => {
-
-  const parent = await Parent.findOneAndUpdate(
-
-    {
-      parentId
-    },
-
-    {
-      eveningStatus: 'picked_from_school'
-    },
-
-    {
-      new: true
-    }
-
-  );
-
-  if (!parent) {
-    throw new Error('Parent not found');
-  }
-
-  return parent;
-
-};
-
-/**
- * Driver drops student at home
- */
-exports.dropStudentHome = async (parentId) => {
-
-  const parent = await Parent.findOneAndUpdate(
-
-    {
-      parentId
-    },
-
-    {
-      eveningStatus: 'dropped_at_home'
-    },
-
-    {
-      new: true
-    }
-
-  );
-
-  if (!parent) {
-    throw new Error('Parent not found');
-  }
-
-  return parent;
-
-};
-
-/**
- * Ride Status
- */
-exports.getRideStatus = async (driverId, rideType) => {
-
-  const ride = await Ride.findOne({
-
-    driverId,
-
-    rideType,
-
-    status: 'started'
-
-  });
 
   return {
 
     rideStarted: !!ride,
 
-    rideType: ride?.rideType || null,
+    rideType:
+      ride?.rideType || null,
 
-    status: ride?.status || 'ended'
+    status:
+      ride?.status || 'ended',
+
+    rideId:
+      ride?.rideId || null,
+
+    studentStatus,
+
+    trackingAvailable
 
   };
 
 };
 
 /**
- * Update Live Location
+ * =====================================================
+ * UPDATE LOCATION
+ * =====================================================
  */
+
 exports.updateLocation = async (
-
   driverId,
-
   rideType,
-
   latitude,
-
   longitude
-
 ) => {
 
-  const ride = await Ride.findOne({
+  const {
+    start,
+    end
+  } = getTodayRange();
 
-    driverId,
+  const ride =
+    await Ride.findOne({
 
-    rideType,
+      driverId,
 
-    status: 'started'
+      rideType,
 
-  });
+      status: 'started',
+
+      createdAt: {
+        $gte: start,
+        $lt: end
+      }
+
+    });
 
   if (!ride) {
-    throw new Error('Ride not found');
+    throw new Error(
+      'No active ride found'
+    );
   }
 
-  ride.currentLatitude = latitude;
+  ride.currentLatitude =
+    latitude;
 
-  ride.currentLongitude = longitude;
+  ride.currentLongitude =
+    longitude;
 
   ride.locations.push({
 
@@ -288,3 +390,157 @@ exports.updateLocation = async (
   return ride;
 
 };
+
+/**
+ * =====================================================
+ * STUDENT ACTIONS
+ * =====================================================
+ */
+
+exports.pickStudentMorning = async (
+  driverId,
+  parentId
+) => {
+
+  await ensureActiveRide(
+    driverId,
+    'morning'
+  );
+
+  const parent =
+    await Parent.findOneAndUpdate(
+
+      {
+        parentId,
+        driverId
+      },
+
+      {
+        morningStatus: 'picked_up'
+      },
+
+      {
+        new: true
+      }
+
+    );
+
+  if (!parent) {
+    throw new Error(
+      'Parent not found'
+    );
+  }
+
+  return parent;
+
+};
+
+
+
+exports.dropStudentSchool = async (
+  driverId,
+  parentId
+) => {
+
+  await ensureActiveRide(
+    driverId,
+    'morning'
+  );
+
+  const parent =
+    await Parent.findOneAndUpdate(
+
+      {
+        parentId,
+        driverId
+      },
+
+      {
+        morningStatus:
+          'dropped_at_school'
+      },
+
+      {
+        new: true
+      }
+
+    );
+
+  if (!parent) {
+    throw new Error(
+      'Parent not found'
+    );
+  }
+
+  return parent;
+
+};
+
+exports.pickStudentFromSchool =
+  async (driverId,parentId) => {
+
+
+     await ensureActiveRide(
+      driverId,
+      'evening'
+    );
+
+    const parent =
+      await Parent.findOneAndUpdate(
+
+        {
+          parentId,
+          driverId
+        },
+
+        {
+          eveningStatus:
+            'picked_from_school'
+        },
+
+        {
+          new: true
+        }
+
+      );
+
+    if (!parent) {
+      throw new Error(
+        'Parent not found'
+      );
+    }
+
+    return parent;
+
+  };
+
+exports.dropStudentHome =
+  async (parentId) => {
+
+    const parent =
+      await Parent.findOneAndUpdate(
+
+        {
+          parentId
+        },
+
+        {
+          eveningStatus:
+            'dropped_at_home'
+        },
+
+        {
+          new: true
+        }
+
+      );
+
+    if (!parent) {
+      throw new Error(
+        'Parent not found'
+      );
+    }
+
+    return parent;
+
+  };

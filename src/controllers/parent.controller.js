@@ -747,6 +747,27 @@ const saveMonthlyAttendance = async (
           records
         );
 
+    // =====================================================
+    // KEEP PARENT ATTENDANCE BOOLEAN IN SYNC FOR TODAY
+    // =====================================================
+    const today = new Date();
+    const todayRecord = result.records.find(record => {
+      const date = new Date(record.date);
+      return (
+        date.getFullYear() === today.getFullYear() &&
+        date.getMonth() === today.getMonth() &&
+        date.getDate() === today.getDate()
+      );
+    });
+
+    if (todayRecord) {
+
+      result.parent.attendance = todayRecord.status === 'present';
+
+      await result.parent.save();
+
+    }
+
     const io =
       req.app.get('io');
 
@@ -755,11 +776,37 @@ const saveMonthlyAttendance = async (
     // ==========================================
 
     emitAttendanceUpdated(
-    io,
-  result.parent,
-  result.year,
-  result.month,
-  result.records
+      io,
+      result.parent,
+      result.year,
+      result.month,
+      result.records
+    );
+
+    // =====================================================
+    // UPDATE PARENT DASHBOARD IMMEDIATELY
+    // =====================================================
+
+    io.to(result.parent.parentId).emit(
+      'dashboardUpdated',
+      {
+        type: 'attendance_updated',
+
+        parentId:
+          result.parent.parentId,
+
+        attendance:
+          todayRecord
+            ? todayRecord.status === 'present'
+            : false,
+
+        todayAttendanceStatus:
+          todayRecord?.status ||
+          'not_marked',
+
+        timestamp:
+          Date.now()
+      }
     );
 
     // ==========================================
@@ -932,13 +979,13 @@ const emitAttendanceUpdated = (
 
       return (
         recordDate.getFullYear() ===
-          today.getFullYear() &&
+        today.getFullYear() &&
 
         recordDate.getMonth() ===
-          today.getMonth() &&
+        today.getMonth() &&
 
         recordDate.getDate() ===
-          today.getDate()
+        today.getDate()
       );
 
     });
@@ -1066,7 +1113,7 @@ module.exports = {
   getDashboard,
 
   updateAttendance,
-emitAttendanceUpdated,
+  emitAttendanceUpdated,
   updateStudentStatus,
   saveMonthlyAttendance,
   getMonthlyAttendance

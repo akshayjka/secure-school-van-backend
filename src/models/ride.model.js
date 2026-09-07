@@ -23,7 +23,7 @@ const rideSchema = new mongoose.Schema(
     status: {
       type: String,
       enum: ['started', 'ended'],
-      default: 'started'
+       required: true
     },
 
     startTime: {
@@ -35,23 +35,15 @@ const rideSchema = new mongoose.Schema(
     },
 
     startLocation: {
-
       name: String,
-
       latitude: Number,
-
       longitude: Number
-
     },
 
     endLocation: {
-
       name: String,
-
       latitude: Number,
-
       longitude: Number
-
     },
 
     currentLatitude: Number,
