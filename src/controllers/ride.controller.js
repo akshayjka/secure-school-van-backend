@@ -757,6 +757,9 @@ exports.endRide = async (req, res) => {
  * =====================================================
  */
 
+// ride.controller.js
+// IMPORTANT FIX INSIDE getLiveLocation()
+
 exports.getLiveLocation = async (req, res) => {
 
   try {
@@ -769,6 +772,7 @@ exports.getLiveLocation = async (req, res) => {
     const {
       parentId
     } = req.query;
+
 
     if (
       !driverId ||
@@ -787,6 +791,7 @@ exports.getLiveLocation = async (req, res) => {
 
     }
 
+
     if (
       rideType !== 'morning' &&
       rideType !== 'evening'
@@ -796,16 +801,12 @@ exports.getLiveLocation = async (req, res) => {
 
         success: false,
 
-        message:
-          'Invalid rideType'
+        message: 'Invalid rideType'
 
       });
 
     }
 
-    // =====================================================
-    // VERIFY PARENT
-    // =====================================================
 
     const parent =
       await Parent.findOne({
@@ -815,6 +816,7 @@ exports.getLiveLocation = async (req, res) => {
         driverId
 
       });
+
 
     if (!parent) {
 
@@ -829,50 +831,14 @@ exports.getLiveLocation = async (req, res) => {
 
     }
 
-    // =====================================================
-    // VERIFY STUDENT IS INSIDE VAN
-    // =====================================================
 
-    let trackingAllowed = false;
-
-    if (
-      rideType === 'morning' &&
-      parent.morningStatus === 'picked_up'
-    ) {
-
-      trackingAllowed = true;
-
-    }
-
-    if (
-      rideType === 'evening' &&
-      parent.eveningStatus ===
-        'picked_from_school'
-    ) {
-
-      trackingAllowed = true;
-
-    }
-
-    if (!trackingAllowed) {
-
-      return res.status(403).json({
-
-        success: false,
-
-        trackingAvailable: false,
-
-        message:
-          'Live tracking is available only while the student is inside the van'
-
-      });
-
-    }
-
-    // =====================================================
-    // ACTIVE RIDE
-    // =====================================================
-
+    /*
+     * Find the currently running ride FIRST.
+     *
+     * Return ride tracking must not fail merely because
+     * the student's individual boarding status has not
+     * arrived yet.
+     */
     const ride =
       await Ride.findOne({
 
@@ -882,9 +848,11 @@ exports.getLiveLocation = async (req, res) => {
 
         status: 'started'
 
-      }).sort({
+      })
+      .sort({
         createdAt: -1
       });
+
 
     if (!ride) {
 
@@ -900,6 +868,32 @@ exports.getLiveLocation = async (req, res) => {
       });
 
     }
+
+
+    /*
+     * Once the ride is active, return-trip tracking can
+     * display the van.
+     *
+     * Morning keeps the stricter student-inside-van rule.
+     */
+    if (
+      rideType === 'morning' &&
+      parent.morningStatus !== 'picked_up'
+    ) {
+
+      return res.status(403).json({
+
+        success: false,
+
+        trackingAvailable: false,
+
+        message:
+          'Live tracking is available after student pickup'
+
+      });
+
+    }
+
 
     return res.status(200).json({
 
@@ -942,7 +936,7 @@ exports.getLiveLocation = async (req, res) => {
   catch (error) {
 
     console.error(
-      'Live Location Error',
+      'Get Live Location Error:',
       error
     );
 
