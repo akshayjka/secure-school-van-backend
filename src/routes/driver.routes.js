@@ -17,6 +17,10 @@ router.post('/add', driverController.addDriver);
 
 router.get('/dashboard/:driverId', driverController.getDashboard);
 // router.get('/', driverController.getDrivers);
+router.get(
+  '/find',
+  driverController.findDriver
+);
 
 router.get('/:id', driverController.getDriver);
 
