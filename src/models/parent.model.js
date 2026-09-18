@@ -29,6 +29,29 @@ const parentSchema = new mongoose.Schema(
       default: false
     },
 
+    // =====================================================
+    // STUDENT JOURNEY TIMESTAMPS
+    // =====================================================
+
+    morningPickedUpAt: {
+      type: Date,
+      default: null
+    },
+
+    morningDroppedAtSchoolAt: {
+      type: Date,
+      default: null
+    },
+
+    eveningPickedFromSchoolAt: {
+      type: Date,
+      default: null
+    },
+
+    eveningDroppedAtHomeAt: {
+      type: Date,
+      default: null
+    },
     // -------------------------
     // Morning Ride
     // -------------------------
@@ -64,6 +87,8 @@ const parentSchema = new mongoose.Schema(
       default: 'waiting_school_finish'
 
     },
+
+  
 
     name: {
 

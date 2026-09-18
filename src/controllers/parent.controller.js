@@ -364,6 +364,8 @@ const updateAttendance = async (req, res) => {
     const io =
       req.app.get('io');
 
+    
+
     /**
      * Parent Room
      */
@@ -454,242 +456,6 @@ const updateAttendance = async (req, res) => {
  * =====================================================
  */
 
-const updateStudentStatus = async (req, res) => {
-
-  try {
-
-    const {
-
-      parentId,
-
-      rideType,
-
-      status
-
-    } = req.body;
-
-    if (
-
-      !parentId ||
-
-      !rideType ||
-
-      !status
-
-    ) {
-
-      return res.status(400).json({
-
-        success: false,
-
-        message:
-          'parentId, rideType and status are required'
-
-      });
-
-    }
-
-    const parent =
-      await parentService.updateStudentStatus(
-
-        parentId,
-
-        rideType,
-
-        status
-
-      );
-
-    const io =
-      req.app.get('io');
-
-    /**
-     * Parent
-     */
-
-    io.to(parentId).emit(
-
-      'studentStatusUpdated',
-
-      {
-
-        parentId,
-
-        rideType,
-
-        status
-
-      }
-
-    );
-
-    /**
-     * Driver + Parents
-     */
-
-    emitDriverChannel(
-
-      io,
-
-      parent.driverId,
-
-      'studentStatusUpdated',
-
-      {
-
-        parentId,
-
-        rideType,
-
-        status,
-
-        driverId: parent.driverId
-
-      }
-
-    );
-
-    emitDriverChannel(
-
-      io,
-
-      parent.driverId,
-
-      'dashboardUpdated',
-
-      {
-
-        type: 'student_status_updated'
-
-      }
-
-    );
-
-    /**
-     * Tracking
-     */
-
-    if (
-
-      rideType === 'morning' &&
-
-      status === 'picked_up'
-
-    ) {
-
-      io.to(parentId).emit(
-
-        'trackingStarted',
-
-        {
-
-          parentId,
-
-          rideType
-
-        }
-
-      );
-
-    }
-
-    if (
-
-      rideType === 'morning' &&
-
-      status === 'dropped_at_school'
-
-    ) {
-
-      io.to(parentId).emit(
-
-        'trackingStopped',
-
-        {
-
-          parentId,
-
-          rideType
-
-        }
-
-      );
-
-    }
-
-    if (
-
-      rideType === 'evening' &&
-
-      status === 'picked_from_school'
-
-    ) {
-
-      io.to(parentId).emit(
-
-        'trackingStarted',
-
-        {
-
-          parentId,
-
-          rideType
-
-        }
-
-      );
-
-    }
-
-    if (
-
-      rideType === 'evening' &&
-
-      status === 'dropped_at_home'
-
-    ) {
-
-      io.to(parentId).emit(
-
-        'trackingStopped',
-
-        {
-
-          parentId,
-
-          rideType
-
-        }
-
-      );
-
-    }
-
-    return res.status(200).json({
-
-      success: true,
-
-      message: 'Student status updated',
-
-      data: parent
-
-    });
-
-  }
-
-  catch (error) {
-
-    return res.status(500).json({
-
-      success: false,
-
-      message: error.message
-
-    });
-
-  }
-
-};
 
 const saveMonthlyAttendance = async (
   req,
@@ -1091,6 +857,260 @@ const emitAttendanceUpdated = (
       'attendanceUpdated',
       payload
     );
+
+  }
+
+};
+
+/**
+ * =====================================================
+ * UPDATE STUDENT RIDE STATUS
+ * =====================================================
+ */
+
+const updateStudentStatus = async (req, res) => {
+
+  try {
+
+    const {
+      parentId,
+      rideType,
+      status
+    } = req.body;
+
+    console.log(
+      '========================================'
+    );
+
+    console.log(
+      'UPDATE STUDENT STATUS'
+    );
+
+    console.log(
+      'parentId:',
+      parentId
+    );
+
+    console.log(
+      'rideType:',
+      rideType
+    );
+
+    console.log(
+      'status:',
+      status
+    );
+
+    console.log(
+      '========================================'
+    );
+
+    // -------------------------------------------------
+    // VALIDATION
+    // -------------------------------------------------
+
+    if (
+      !parentId ||
+      !rideType ||
+      !status
+    ) {
+
+      return res.status(400).json({
+
+        success: false,
+
+        message:
+          'parentId, rideType and status are required'
+
+      });
+
+    }
+
+    if (
+      !['morning', 'evening']
+        .includes(rideType)
+    ) {
+
+      return res.status(400).json({
+
+        success: false,
+
+        message:
+          'Invalid rideType'
+
+      });
+
+    }
+
+    // -------------------------------------------------
+    // UPDATE THROUGH SERVICE
+    // -------------------------------------------------
+
+    const result =
+      await parentService.updateStudentStatus(
+        parentId,
+        rideType,
+        status
+      );
+
+    const parent =
+      result.parent;
+
+    const eventTime =
+      result.eventTime;
+
+    // -------------------------------------------------
+    // JOURNEY TIMES
+    // -------------------------------------------------
+
+    const journeyTimes = {
+
+      morningPickedUpAt:
+        parent.morningPickedUpAt || null,
+
+      morningDroppedAtSchoolAt:
+        parent.morningDroppedAtSchoolAt || null,
+
+      eveningPickedFromSchoolAt:
+        parent.eveningPickedFromSchoolAt || null,
+
+      eveningDroppedAtHomeAt:
+        parent.eveningDroppedAtHomeAt || null
+
+    };
+
+    // -------------------------------------------------
+    // FINAL DATABASE STATUS
+    // -------------------------------------------------
+
+    const finalStatus =
+      rideType === 'morning'
+        ? parent.morningStatus
+        : parent.eveningStatus;
+
+    // -------------------------------------------------
+    // SOCKET
+    // -------------------------------------------------
+
+    const io =
+      req.app.get('io');
+
+    const socketPayload = {
+
+      parentId:
+        parent.parentId,
+
+      driverId:
+        parent.driverId,
+
+      studentName:
+        parent.studentName,
+
+      rideType,
+
+      // Return the frontend action.
+      // Example evening pickup = picked_up.
+      status,
+
+      // Return actual DB status too.
+      finalStatus,
+
+      eventTime,
+
+      timestamp:
+        eventTime,
+
+      journeyTimes
+
+    };
+
+    if (io) {
+
+      // Parent room
+      io.to(
+        parent.parentId
+      ).emit(
+        'studentStatusUpdated',
+        socketPayload
+      );
+
+      // Driver room
+      emitDriverChannel(
+        io,
+        parent.driverId,
+        'studentStatusUpdated',
+        socketPayload
+      );
+
+      // Driver dashboard refresh
+      emitDriverChannel(
+        io,
+        parent.driverId,
+        'dashboardUpdated',
+        {
+          type:
+            'student_status_updated',
+
+          parentId:
+            parent.parentId,
+
+          rideType,
+
+          status:
+            finalStatus,
+
+          timestamp:
+            eventTime
+        }
+      );
+
+    }
+
+    // -------------------------------------------------
+    // RESPONSE
+    // -------------------------------------------------
+
+    return res.status(200).json({
+
+      success: true,
+
+      message:
+        'Student status updated successfully',
+
+      data: {
+
+        parent,
+
+        status,
+
+        finalStatus,
+
+        eventTime,
+
+        journeyTimes
+
+      }
+
+    });
+
+  }
+
+  catch (error) {
+
+    console.error(
+      '❌ UPDATE STUDENT STATUS ERROR:',
+      error
+    );
+
+    return res.status(500).json({
+
+      success: false,
+
+      message:
+        error.message ||
+        'Failed to update student status'
+
+    });
 
   }
 

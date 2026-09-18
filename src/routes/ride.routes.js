@@ -67,4 +67,9 @@ router.put(
   rideController.dropStudentHome
 );
 
+router.get(
+  '/journey-report/:parentId',
+  rideController.getStudentJourneyReport
+);
+
 module.exports = router;

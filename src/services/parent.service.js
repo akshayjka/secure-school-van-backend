@@ -519,56 +519,276 @@ const dropStudentHome = async (parentId) => {
   );
 
 };
-
 /**
- * Generic Status Update
+ * =====================================================
+ * Generic Student Status Update
+ * =====================================================
+ *
+ * Frontend contract:
+ *
+ * MORNING
+ * picked_up
+ * dropped_at_school
+ *
+ * EVENING
+ * picked_up
+ * dropped_at_home
+ *
+ * Backend mapping:
+ *
+ * evening + picked_up
+ *      ->
+ * eveningStatus = picked_from_school
+ *
+ * =====================================================
  */
 
 const updateStudentStatus = async (
-
   parentId,
-
   rideType,
-
   status
-
 ) => {
 
-  const update = {};
+  // -----------------------------------------------------
+  // VALIDATION
+  // -----------------------------------------------------
 
-  if (rideType === 'morning') {
-
-    update.morningStatus = status;
-
+  if (!parentId) {
+    throw new Error('parentId is required');
   }
 
-  else {
-
-    update.eveningStatus = status;
-
+  if (!['morning', 'evening'].includes(rideType)) {
+    throw new Error('Invalid rideType');
   }
 
-  const parent =
-    await Parent.findOneAndUpdate(
+  if (!status) {
+    throw new Error('status is required');
+  }
 
-      {
-        parentId
-      },
+  // -----------------------------------------------------
+  // FIND PARENT
+  // -----------------------------------------------------
 
-      update,
-
-      {
-        new: true
-      }
-
-    );
+  const parent = await Parent.findOne({
+    parentId
+  });
 
   if (!parent) {
     throw new Error('Parent not found');
   }
 
-  return parent;
+  // -----------------------------------------------------
+  // ATTENDANCE
+  // -----------------------------------------------------
 
+  if (parent.attendance !== true) {
+    throw new Error(
+      'Absent students cannot be picked up'
+    );
+  }
+
+  // -----------------------------------------------------
+  // EVENT TIME
+  // -----------------------------------------------------
+
+  const eventTime = new Date();
+
+  const update = {};
+
+  // =====================================================
+  // MORNING
+  // =====================================================
+
+  if (rideType === 'morning') {
+
+    // ---------------------------------------------------
+    // MORNING PICKUP
+    // ---------------------------------------------------
+
+    if (status === 'picked_up') {
+
+      if (
+        parent.morningStatus === 'picked_up'
+      ) {
+        throw new Error(
+          'Student is already picked up'
+        );
+      }
+
+      if (
+        parent.morningStatus ===
+        'dropped_at_school'
+      ) {
+        throw new Error(
+          'Student has already been dropped at school'
+        );
+      }
+
+      update.morningStatus =
+        'picked_up';
+
+      update.morningPickedUpAt =
+        eventTime;
+    }
+
+    // ---------------------------------------------------
+    // MORNING SCHOOL DROP
+    // ---------------------------------------------------
+
+    else if (
+      status === 'dropped_at_school'
+    ) {
+
+      if (
+        parent.morningStatus !==
+        'picked_up'
+      ) {
+        throw new Error(
+          'Student must be picked up before school drop'
+        );
+      }
+
+      update.morningStatus =
+        'dropped_at_school';
+
+      update.morningDroppedAtSchoolAt =
+        eventTime;
+    }
+
+    // ---------------------------------------------------
+    // INVALID MORNING STATUS
+    // ---------------------------------------------------
+
+    else {
+
+      throw new Error(
+        `Invalid morning status: ${status}`
+      );
+    }
+  }
+
+  // =====================================================
+  // EVENING
+  // =====================================================
+
+  else if (rideType === 'evening') {
+
+    // ---------------------------------------------------
+    // EVENING SCHOOL PICKUP
+    // ---------------------------------------------------
+
+    if (status === 'picked_up') {
+
+      if (
+        parent.eveningStatus ===
+        'picked_from_school'
+      ) {
+        throw new Error(
+          'Student is already picked up from school'
+        );
+      }
+
+      if (
+        parent.eveningStatus ===
+        'dropped_at_home'
+      ) {
+        throw new Error(
+          'Student has already been dropped at home'
+        );
+      }
+
+      // IMPORTANT:
+      // Frontend sends picked_up.
+      // Database MUST store picked_from_school.
+
+      update.eveningStatus =
+        'picked_from_school';
+
+      update.eveningPickedFromSchoolAt =
+        eventTime;
+    }
+
+    // ---------------------------------------------------
+    // EVENING HOME DROP
+    // ---------------------------------------------------
+
+    else if (
+      status === 'dropped_at_home'
+    ) {
+
+      if (
+        parent.eveningStatus !==
+        'picked_from_school'
+      ) {
+        throw new Error(
+          'Student must be picked from school before home drop'
+        );
+      }
+
+      update.eveningStatus =
+        'dropped_at_home';
+
+      update.eveningDroppedAtHomeAt =
+        eventTime;
+    }
+
+    // ---------------------------------------------------
+    // INVALID EVENING STATUS
+    // ---------------------------------------------------
+
+    else {
+
+      throw new Error(
+        `Invalid evening status: ${status}`
+      );
+    }
+  }
+
+  // -----------------------------------------------------
+  // UPDATE ONLY THIS STUDENT
+  // -----------------------------------------------------
+
+ const updatedParent =
+  await Parent.findOneAndUpdate(
+    {
+      parentId,
+      driverId,
+      attendance: true
+    },
+    {
+      $set: {
+        morningStatus: 'picked_up',
+        morningPickedUpAt: eventTime
+      }
+    },
+    {
+      new: true
+    }
+  );
+
+if (!updatedParent) {
+  throw new Error(
+    'Present parent/student not found or student is absent'
+  );
+}
+
+
+// Save daily history
+const journey =
+  await getOrCreateStudentJourney(
+    updatedParent,
+    eventTime
+  );
+
+journey.morning.pickedUpAt =
+  eventTime;
+
+await journey.save();
+
+return {
+  parent: updatedParent,
+  timestamp: eventTime
+};
 };
 
 const saveMonthlyAttendance = async (

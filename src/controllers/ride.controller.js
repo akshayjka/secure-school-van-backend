@@ -4,6 +4,7 @@ const Driver = require('../models/driver.model');
 
 const rideService = require('../services/ride.service');
 
+
 /**
  * =====================================================
  * CONSTANTS
@@ -31,6 +32,100 @@ const getDriverRoom = (driverId) => {
   return `driver_${driverId}`;
 
 };
+
+// =====================================================
+// GET DAILY STUDENT JOURNEY REPORT
+// GET /api/rides/journey-report/:parentId?date=YYYY-MM-DD
+// =====================================================
+
+exports.getStudentJourneyReport =
+  async (req, res) => {
+
+    try {
+
+      const {
+        parentId
+      } = req.params;
+
+      const {
+        date
+      } = req.query;
+
+      // -------------------------------------------------
+      // VALIDATION
+      // -------------------------------------------------
+
+      if (!parentId) {
+
+        return res.status(400).json({
+
+          success: false,
+
+          message:
+            'parentId is required'
+
+        });
+
+      }
+
+      if (!date) {
+
+        return res.status(400).json({
+
+          success: false,
+
+          message:
+            'date is required'
+
+        });
+
+      }
+
+      // -------------------------------------------------
+      // GET REPORT
+      // -------------------------------------------------
+
+      const data =
+        await rideService
+          .getStudentJourneyReport(
+            parentId,
+            date
+          );
+
+      // -------------------------------------------------
+      // RESPONSE
+      // -------------------------------------------------
+
+      return res.status(200).json({
+
+        success: true,
+
+        data
+
+      });
+
+    }
+
+    catch (error) {
+
+      console.error(
+        'GET JOURNEY REPORT ERROR:',
+        error
+      );
+
+      return res.status(500).json({
+
+        success: false,
+
+        message:
+          error.message ||
+          'Unable to get journey report'
+
+      });
+
+    }
+
+  };
 
 /**
  * =====================================================
@@ -849,9 +944,9 @@ exports.getLiveLocation = async (req, res) => {
         status: 'started'
 
       })
-      .sort({
-        createdAt: -1
-      });
+        .sort({
+          createdAt: -1
+        });
 
 
     if (!ride) {
@@ -869,30 +964,107 @@ exports.getLiveLocation = async (req, res) => {
 
     }
 
+// =====================================================
+// TRACKING ACCESS RULE
+// =====================================================
 
-    /*
-     * Once the ride is active, return-trip tracking can
-     * display the van.
-     *
-     * Morning keeps the stricter student-inside-van rule.
-     */
-    if (
-      rideType === 'morning' &&
-      parent.morningStatus !== 'picked_up'
-    ) {
+const studentStatus =
+  rideType === 'morning'
+    ? parent.morningStatus
+    : parent.eveningStatus;
 
-      return res.status(403).json({
 
-        success: false,
+// -----------------------------------------------------
+// MORNING
+// -----------------------------------------------------
+//
+// Ride started + student present
+// = tracking available immediately.
+//
+// -----------------------------------------------------
 
-        trackingAvailable: false,
+if (rideType === 'morning') {
 
-        message:
-          'Live tracking is available after student pickup'
+  if (parent.attendance !== true) {
 
-      });
+    return res.status(403).json({
 
-    }
+      success: false,
+
+      trackingAvailable: false,
+
+      message:
+        'Live tracking is unavailable because the student is absent'
+
+    });
+
+  }
+
+
+  if (
+    studentStatus === 'dropped_at_school' ||
+    studentStatus === 'dropped'
+  ) {
+
+    return res.status(403).json({
+
+      success: false,
+
+      trackingAvailable: false,
+
+      message:
+        'Morning tracking ended because the student has reached school'
+
+    });
+
+  }
+
+}
+
+
+// -----------------------------------------------------
+// EVENING
+// -----------------------------------------------------
+//
+// Student must actually be picked from school.
+// -----------------------------------------------------
+
+if (rideType === 'evening') {
+
+  if (parent.attendance !== true) {
+
+    return res.status(403).json({
+
+      success: false,
+
+      trackingAvailable: false,
+
+      message:
+        'Live tracking is unavailable because the student is absent'
+
+    });
+
+  }
+
+
+  if (
+    studentStatus !== 'picked_from_school'
+  ) {
+
+    return res.status(403).json({
+
+      success: false,
+
+      trackingAvailable: false,
+
+      message:
+        'Live tracking is available after school pickup'
+
+    });
+
+  }
+
+}
 
 
     return res.status(200).json({
@@ -900,35 +1072,49 @@ exports.getLiveLocation = async (req, res) => {
       success: true,
 
       trackingAvailable: true,
+data: {
 
-      data: {
+  rideId:
+    ride.rideId,
 
-        rideId:
-          ride.rideId,
+  driverId:
+    ride.driverId,
 
-        driverId:
-          ride.driverId,
+  rideType:
+    ride.rideType,
 
-        rideType:
-          ride.rideType,
+  latitude:
+    ride.currentLatitude,
 
-        latitude:
-          ride.currentLatitude,
+  longitude:
+    ride.currentLongitude,
 
-        longitude:
-          ride.currentLongitude,
+  startTime:
+    ride.startTime,
 
-        startTime:
-          ride.startTime,
+  status:
+    ride.status,
 
-        status:
-          ride.status,
+  updatedAt:
+    ride.updatedAt,
 
-        updatedAt:
-          ride.updatedAt
+  journeyTimes: {
 
-      }
+    morningPickedUpAt:
+      parent.morningPickedUpAt || null,
 
+    morningDroppedAtSchoolAt:
+      parent.morningDroppedAtSchoolAt || null,
+
+    eveningPickedFromSchoolAt:
+      parent.eveningPickedFromSchoolAt || null,
+
+    eveningDroppedAtHomeAt:
+      parent.eveningDroppedAtHomeAt || null
+
+  }
+
+}
     });
 
   }
@@ -962,53 +1148,55 @@ exports.getRideStatus = async (req, res) => {
 
   try {
 
-   const {
-  driverId,
-  rideType
-} = req.params;
+    const {
+      driverId,
+      rideType
+    } = req.params;
 
-const {
-  parentId
-} = req.query;
+    const {
+      parentId
+    } = req.query;
 
-const data =
-  await rideService.getRideStatus(
-    driverId,
-    rideType,
-    parentId
-  );
+    const data =
+      await rideService.getRideStatus(
+        driverId,
+        rideType,
+        parentId
+      );
 
-return res.status(200).json({
+    return res.status(200).json({
 
-  success: true,
+      success: true,
 
-  data: {
+      data: {
 
-    driverId,
+        driverId,
 
-    rideType,
+        rideType,
 
-    rideStarted:
-      data.rideStarted,
+        rideStarted:
+          data.rideStarted,
 
-    status:
-      data.status,
+        status:
+          data.status,
 
-    rideId:
-      data.rideId,
+        rideId:
+          data.rideId,
 
-    studentStatus:
-      data.studentStatus,
+        studentStatus:
+          data.studentStatus,
 
-    trackingAvailable:
-      data.trackingAvailable,
+        trackingAvailable:
+          data.trackingAvailable,
+        journeyTimes:
+          data.journeyTimes,
 
-    timestamp:
-      Date.now()
+        timestamp:
+          Date.now()
 
-  }
+      }
 
-});
+    });
 
   }
 
@@ -1033,26 +1221,75 @@ return res.status(200).json({
   }
 
 };
-/**
- * =====================================================
- * MORNING PICKUP
- * =====================================================
- */
+// =====================================================
+// MORNING PICKUP
+// =====================================================
 
 exports.pickStudentMorning = async (req, res) => {
 
   try {
 
-    const { parentId } = req.body;
+    const {
+      driverId,
+      parentId
+    } = req.body;
+
+
+    if (!driverId || !parentId) {
+
+      return res.status(400).json({
+
+        success: false,
+
+        message:
+          'driverId and parentId are required'
+
+      });
+
+    }
+
+
+    const result =
+      await rideService.pickStudentMorning(
+        driverId,
+        parentId
+      );
+
 
     const parent =
-      await rideService.pickStudentMorning(driverId,parentId);
+      result.parent;
 
-    const io = req.app.get('io');
+    const timestamp =
+      result.timestamp;
 
-    /**
-     * Parent Room
-     */
+
+    const io =
+      req.app.get('io');
+
+
+    const payload = {
+
+      parentId:
+        parent.parentId,
+
+      driverId:
+        parent.driverId,
+
+      rideType:
+        'morning',
+
+      status:
+        'picked_up',
+
+      timestamp,
+
+      pickupTime:
+        timestamp
+
+    };
+
+
+    // Parent
 
     emitParent(
 
@@ -1062,21 +1299,12 @@ exports.pickStudentMorning = async (req, res) => {
 
       'studentStatusUpdated',
 
-      {
-
-        parentId: parent.parentId,
-
-        rideType: 'morning',
-
-        status: 'picked_up'
-
-      }
+      payload
 
     );
 
-    /**
-     * Driver + Parents
-     */
+
+    // Driver
 
     emitDriverChannel(
 
@@ -1086,19 +1314,12 @@ exports.pickStudentMorning = async (req, res) => {
 
       'studentStatusUpdated',
 
-      {
-
-        parentId: parent.parentId,
-
-        driverId: parent.driverId,
-
-        rideType: 'morning',
-
-        status: 'picked_up'
-
-      }
+      payload
 
     );
+
+
+    // Dashboard
 
     broadcastDashboardUpdate(
 
@@ -1110,13 +1331,21 @@ exports.pickStudentMorning = async (req, res) => {
 
     );
 
+
     return res.status(200).json({
 
       success: true,
 
-      message: 'Student picked successfully',
+      message:
+        'Student picked successfully',
 
-      data: parent
+      data: {
+
+        parent,
+
+        timestamp
+
+      }
 
     });
 
@@ -1124,13 +1353,17 @@ exports.pickStudentMorning = async (req, res) => {
 
   catch (error) {
 
-    console.error(error);
+    console.error(
+      'Morning Pickup Error:',
+      error
+    );
 
     return res.status(500).json({
 
       success: false,
 
-      message: error.message
+      message:
+        error.message
 
     });
 
@@ -1142,96 +1375,201 @@ exports.pickStudentMorning = async (req, res) => {
  * MORNING DROP
  * =====================================================
  */
-
 exports.dropStudentSchool = async (req, res) => {
-
   try {
 
-    const { parentId } = req.body;
+    const {
+      driverId,
+      parentId
+    } = req.body;
+
+    console.log('========================================');
+    console.log('DROP STUDENT AT SCHOOL');
+    console.log('driverId:', driverId);
+    console.log('parentId:', parentId);
+    console.log('========================================');
+
+
+    // =====================================================
+    // VALIDATION
+    // =====================================================
+
+    if (!driverId || !parentId) {
+
+      return res.status(400).json({
+        success: false,
+        message: 'driverId and parentId are required'
+      });
+
+    }
+
+
+    // =====================================================
+    // UPDATE DATABASE
+    // =====================================================
+
+    const result =
+      await rideService.dropStudentSchool(
+        driverId,
+        parentId
+      );
+
 
     const parent =
-      await rideService.dropStudentSchool(parentId);
+      result.parent;
 
-    const io = req.app.get('io');
+    const timestamp =
+      result.timestamp;
 
-    emitParent(
 
-      io,
+    // =====================================================
+    // SOCKET
+    // =====================================================
 
-      parent.parentId,
+    const io =
+      req.app.get('io');
 
-      'studentStatusUpdated',
 
-      {
+    const payload = {
 
-        parentId: parent.parentId,
+      parentId:
+        parent.parentId,
 
-        rideType: 'morning',
+      driverId:
+        parent.driverId,
 
-        status: 'dropped_at_school'
+      studentName:
+        parent.studentName,
+
+      rideType:
+        'morning',
+
+      status:
+        'dropped_at_school',
+
+      finalStatus:
+        'dropped_at_school',
+
+      timestamp,
+
+      dropTime:
+        timestamp,
+
+      journeyTimes: {
+
+        morningPickedUpAt:
+          parent.morningPickedUpAt || null,
+
+        morningDroppedAtSchoolAt:
+          parent.morningDroppedAtSchoolAt || null,
+
+        eveningPickedFromSchoolAt:
+          parent.eveningPickedFromSchoolAt || null,
+
+        eveningDroppedAtHomeAt:
+          parent.eveningDroppedAtHomeAt || null
 
       }
 
-    );
+    };
 
-    emitDriverChannel(
 
-      io,
+    if (io) {
 
-      parent.driverId,
+      // ===================================================
+      // PARENT
+      // ===================================================
 
-      'studentStatusUpdated',
+      io.to(
+        parent.parentId
+      ).emit(
+        'studentStatusUpdated',
+        payload
+      );
 
-      {
 
-        parentId: parent.parentId,
+      // ===================================================
+      // DRIVER
+      // ===================================================
 
-        driverId: parent.driverId,
+      emitDriverChannel(
+        io,
+        parent.driverId,
+        'studentStatusUpdated',
+        payload
+      );
 
-        rideType: 'morning',
 
-        status: 'dropped_at_school'
+      // ===================================================
+      // DASHBOARD UPDATE
+      // ===================================================
 
-      }
+      emitDriverChannel(
+        io,
+        parent.driverId,
+        'dashboardUpdated',
+        {
+          type:
+            'student_status_updated',
 
-    );
+          parentId:
+            parent.parentId,
 
-    broadcastDashboardUpdate(
+          rideType:
+            'morning',
 
-      io,
+          status:
+            'dropped_at_school',
 
-      parent.driverId,
+          timestamp
 
-      'student_dropped'
+        }
+      );
 
-    );
+    }
+
+
+    // =====================================================
+    // RESPONSE
+    // =====================================================
 
     return res.status(200).json({
 
       success: true,
 
-      message: 'Student dropped at school',
+      message:
+        'Student dropped at school successfully',
 
-      data: parent
+      data: {
+
+        parent,
+
+        timestamp
+
+      }
 
     });
 
-  }
 
-  catch (error) {
+  } catch (error) {
 
-    console.error(error);
+    console.error(
+      '❌ DROP STUDENT AT SCHOOL ERROR:',
+      error
+    );
+
 
     return res.status(500).json({
 
       success: false,
 
-      message: error.message
+      message:
+        error.message ||
+        'Unable to drop student at school'
 
     });
 
   }
-
 };
 
 /**
@@ -1240,172 +1578,241 @@ exports.dropStudentSchool = async (req, res) => {
  * =====================================================
  */
 
-exports.pickStudentFromSchool = async (req, res) => {
+// =====================================================
+// EVENING PICKUP FROM SCHOOL
+// =====================================================
 
-  try {
+exports.pickStudentFromSchool =
+  async (req, res) => {
 
-    const { parentId } = req.body;
+    try {
 
-    const parent =
-      await rideService.pickStudentFromSchool(parentId);
+      const {
+        driverId,
+        parentId
+      } = req.body;
 
-    const io = req.app.get('io');
 
-    emitParent(
+      if (!driverId || !parentId) {
 
-      io,
+        return res.status(400).json({
 
-      parent.parentId,
+          success: false,
 
-      'studentStatusUpdated',
+          message:
+            'driverId and parentId are required'
 
-      {
-
-        parentId: parent.parentId,
-
-        rideType: 'evening',
-
-        status: 'picked_from_school'
-
-      }
-
-    );
-
-    emitDriverChannel(
-
-      io,
-
-      parent.driverId,
-
-      'studentStatusUpdated',
-
-      {
-
-        parentId: parent.parentId,
-
-        driverId: parent.driverId,
-
-        rideType: 'evening',
-
-        status: 'picked_from_school'
+        });
 
       }
 
-    );
 
-    broadcastDashboardUpdate(
+      const result =
+        await rideService.pickStudentFromSchool(
+          driverId,
+          parentId
+        );
 
-      io,
 
-      parent.driverId,
+      const parent =
+        result.parent;
 
-      'student_picked'
+      const timestamp =
+        result.timestamp;
 
-    );
 
-    return res.status(200).json({
+      const io =
+        req.app.get('io');
 
-      success: true,
 
-      message: 'Student picked from school',
+      const payload = {
 
-      data: parent
+        parentId:
+          parent.parentId,
 
-    });
+        driverId:
+          parent.driverId,
 
-  }
+        rideType:
+          'evening',
 
-  catch (error) {
+        status:
+          'picked_from_school',
 
-    console.error(error);
+        timestamp,
 
-    return res.status(500).json({
+        pickupTime:
+          timestamp
 
-      success: false,
+      };
 
-      message: error.message
 
-    });
+      emitParent(
+        io,
+        parent.parentId,
+        'studentStatusUpdated',
+        payload
+      );
 
-  }
 
-};
-/**
- * =====================================================
- * EVENING DROP
- * =====================================================
- */
+      emitDriverChannel(
+        io,
+        parent.driverId,
+        'studentStatusUpdated',
+        payload
+      );
+
+
+      broadcastDashboardUpdate(
+        io,
+        parent.driverId,
+        'student_picked'
+      );
+
+
+      return res.status(200).json({
+
+        success: true,
+
+        message:
+          'Student picked from school',
+
+        data: {
+
+          parent,
+
+          timestamp
+
+        }
+
+      });
+
+    }
+
+    catch (error) {
+
+      console.error(
+        'Evening Pickup Error:',
+        error
+      );
+
+      return res.status(500).json({
+
+        success: false,
+
+        message:
+          error.message
+
+      });
+
+    }
+
+  };
+// =====================================================
+// EVENING DROP AT HOME
+// =====================================================
 
 exports.dropStudentHome = async (req, res) => {
 
   try {
 
-    const { parentId } = req.body;
+    const {
+      driverId,
+      parentId
+    } = req.body;
+
+
+    if (!driverId || !parentId) {
+
+      return res.status(400).json({
+
+        success: false,
+
+        message:
+          'driverId and parentId are required'
+
+      });
+
+    }
+
+
+    const result =
+      await rideService.dropStudentHome(
+        driverId,
+        parentId
+      );
+
 
     const parent =
-      await rideService.dropStudentHome(parentId);
+      result.parent;
 
-    const io = req.app.get('io');
+    const timestamp =
+      result.timestamp;
+
+
+    const io =
+      req.app.get('io');
+
+
+    const payload = {
+
+      parentId:
+        parent.parentId,
+
+      driverId:
+        parent.driverId,
+
+      rideType:
+        'evening',
+
+      status:
+        'dropped_at_home',
+
+      timestamp,
+
+      dropTime:
+        timestamp
+
+    };
+
 
     emitParent(
-
       io,
-
       parent.parentId,
-
       'studentStatusUpdated',
-
-      {
-
-        parentId: parent.parentId,
-
-        rideType: 'evening',
-
-        status: 'dropped_at_home'
-
-      }
-
+      payload
     );
+
 
     emitDriverChannel(
-
       io,
-
       parent.driverId,
-
       'studentStatusUpdated',
-
-      {
-
-        parentId: parent.parentId,
-
-        driverId: parent.driverId,
-
-        rideType: 'evening',
-
-        status: 'dropped_at_home'
-
-      }
-
+      payload
     );
+
 
     broadcastDashboardUpdate(
-
       io,
-
       parent.driverId,
-
       'student_dropped'
-
     );
+
 
     return res.status(200).json({
 
       success: true,
 
-      message: 'Student dropped at home',
+      message:
+        'Student dropped at home',
 
-      data: parent
+      data: {
+
+        parent,
+
+        timestamp
+
+      }
 
     });
 
@@ -1413,13 +1820,17 @@ exports.dropStudentHome = async (req, res) => {
 
   catch (error) {
 
-    console.error(error);
+    console.error(
+      'Evening Home Drop Error:',
+      error
+    );
 
     return res.status(500).json({
 
       success: false,
 
-      message: error.message
+      message:
+        error.message
 
     });
 
