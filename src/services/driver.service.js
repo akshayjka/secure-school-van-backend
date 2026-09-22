@@ -208,37 +208,29 @@ const getDashboard = async (driverId) => {
 
   }
 
-  const students = await Parent.find(
-
-    {
-
-      driverId
-
-    },
-
-    {
-
-      _id: 0,
-
-      parentId: 1,
-
-      name: 1,
-
-      mobileNumber: 1,
-
-      studentName: 1,
-
-      schoolName: 1,
-
-      pickupArea: 1,
-
-      dropArea: 1,
-
-      attendance: 1
-
-    }
-
-  );
+ const students = await Parent.find(
+  {
+    driverId
+  },
+  {
+    _id: 0,
+    parentId: 1,
+    name: 1,
+    mobileNumber: 1,
+    studentName: 1,
+    schoolName: 1,
+    pickupArea: 1,
+    dropArea: 1,
+    attendance: 1,
+    // IMPORTANT
+    morningStatus: 1,
+    morningPickedUpAt: 1,
+    morningDroppedAtSchoolAt: 1,
+    eveningStatus: 1,
+    eveningPickedFromSchoolAt: 1,
+    eveningDroppedAtHomeAt: 1
+  }
+);
 
   const present = students.filter(
 

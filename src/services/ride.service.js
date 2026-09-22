@@ -474,6 +474,31 @@ const ensureActiveRide = async (
  * =====================================================
  */
 
+/**
+ * =====================================================
+ * START RIDE
+ * =====================================================
+ *
+ * Morning:
+ *   waiting
+ *      ↓
+ *   picked_up
+ *      ↓
+ *   dropped_at_school
+ *
+ * Evening:
+ *   waiting_at_school
+ *      ↓
+ *   picked_from_school
+ *      ↓
+ *   dropped_at_home
+ *
+ * The Parent status belongs to the current ride/day.
+ * When a new ride starts, stale status from an older
+ * ride must never block the new ride.
+ * =====================================================
+ */
+
 exports.startRide = async (
   driverId,
   rideType
@@ -485,35 +510,30 @@ exports.startRide = async (
   } = getTodayRange();
 
   // =====================================================
-  // CHECK TODAY'S ACTIVE RIDE
+  // CHECK ACTIVE RIDE
   // =====================================================
 
   const activeRide =
     await Ride.findOne({
-
       driverId,
-
       rideType,
-
       status: 'started',
-
       createdAt: {
         $gte: start,
         $lt: end
       }
-
     }).sort({
       createdAt: -1
     });
 
   // =====================================================
-  // ALREADY STARTED
+  // EXISTING ACTIVE RIDE
   // =====================================================
 
   if (activeRide) {
 
     console.log(
-      `Ride already active: ${activeRide.rideId}`
+      `Resuming active ${rideType} ride: ${activeRide.rideId}`
     );
 
     return {
@@ -530,6 +550,9 @@ exports.startRide = async (
   const rideCount =
     await Ride.countDocuments();
 
+  const now =
+    new Date();
+
   const ride =
     await Ride.create({
 
@@ -542,85 +565,78 @@ exports.startRide = async (
 
       rideType,
 
-      // IMPORTANT:
-      // This is the ONLY place where a ride
-      // becomes started.
       status: 'started',
 
-      startTime: new Date(),
+      startTime: now,
 
       locations: []
 
     });
 
- // =====================================================
-// RESET STUDENT WORKFLOW
-// =====================================================
-
-if (rideType === 'morning') {
-
-  await Parent.updateMany(
-
-    {
-      driverId,
-
-      attendance: true
-    },
-
-    {
-      $set: {
-
-        morningStatus:
-          'waiting',
-
-        morningPickedUpAt:
-          null,
-
-        morningDroppedAtSchoolAt:
-          null
-
-      }
-
-    }
-
+  console.log(
+    `New ${rideType} ride started: ${ride.rideId}`
   );
 
-}
-else {
+  // =====================================================
+  // RESET STUDENT STATE FOR NEW RIDE
+  // =====================================================
 
-  await Parent.updateMany(
+  if (rideType === 'morning') {
 
-    {
-      driverId,
+    await Parent.updateMany(
+      {
+        driverId,
+        attendance: true
+      },
+      {
+        $set: {
 
-      attendance: true
-    },
+          morningStatus:
+            'waiting',
 
-    {
-      $set: {
+          morningPickedUpAt:
+            null,
 
-        eveningStatus:
-          'waiting_school_finish',
+          morningDroppedAtSchoolAt:
+            null
 
-        eveningPickedFromSchoolAt:
-          null,
-
-        eveningDroppedAtHomeAt:
-          null
-
+        }
       }
+    );
 
-    }
+  }
 
-  );
+  else if (rideType === 'evening') {
 
-}
+    await Parent.updateMany(
+      {
+        driverId,
+        attendance: true
+      },
+      {
+        $set: {
 
-  
+          eveningStatus:
+            'waiting_school_finish',
+
+          eveningPickedFromSchoolAt:
+            null,
+
+          eveningDroppedAtHomeAt:
+            null
+
+        }
+      }
+    );
+
+  }
 
   return {
+
     ride,
+
     alreadyStarted: false
+
   };
 
 };
@@ -673,33 +689,11 @@ exports.endRide = async (
 
 };
 
-/**
- * =====================================================
- * GET RIDE STATUS
- * =====================================================
- */
-
 exports.getRideStatus = async (
   driverId,
   rideType,
   parentId = null
 ) => {
-
-  let journeyTimes = {
-
-  morningPickedUpAt:
-    null,
-
-  morningDroppedAtSchoolAt:
-    null,
-
-  eveningPickedFromSchoolAt:
-    null,
-
-  eveningDroppedAtHomeAt:
-    null
-
-};
 
   const {
     start,
@@ -708,18 +702,13 @@ exports.getRideStatus = async (
 
   const ride =
     await Ride.findOne({
-
       driverId,
-
       rideType,
-
       status: 'started',
-
       createdAt: {
         $gte: start,
         $lt: end
       }
-
     }).sort({
       createdAt: -1
     });
@@ -727,6 +716,22 @@ exports.getRideStatus = async (
   let studentStatus = null;
 
   let trackingAvailable = false;
+
+  let journeyTimes = {
+
+    morningPickedUpAt:
+      null,
+
+    morningDroppedAtSchoolAt:
+      null,
+
+    eveningPickedFromSchoolAt:
+      null,
+
+    eveningDroppedAtHomeAt:
+      null
+
+  };
 
   if (parentId) {
 
@@ -738,57 +743,62 @@ exports.getRideStatus = async (
 
     if (parent) {
 
-      let journeyTimes = {
-
-  morningPickedUpAt:
-    null,
-
-  morningDroppedAtSchoolAt:
-    null,
-
-  eveningPickedFromSchoolAt:
-    null,
-
-  eveningDroppedAtHomeAt:
-    null
-
-};
       studentStatus =
         rideType === 'morning'
           ? parent.morningStatus
           : parent.eveningStatus;
 
+      journeyTimes = {
+
+        morningPickedUpAt:
+          parent.morningPickedUpAt || null,
+
+        morningDroppedAtSchoolAt:
+          parent.morningDroppedAtSchoolAt || null,
+
+        eveningPickedFromSchoolAt:
+          parent.eveningPickedFromSchoolAt || null,
+
+        eveningDroppedAtHomeAt:
+          parent.eveningDroppedAtHomeAt || null
+
+      };
+
       trackingAvailable =
         rideType === 'morning'
-          ? Boolean(ride) && parent.attendance === true
+          ? Boolean(ride) &&
+            parent.attendance === true &&
+            studentStatus === 'picked_up'
+
           : Boolean(ride) &&
-          parent.attendance === true &&
-          studentStatus === 'picked_from_school';
+            parent.attendance === true &&
+            studentStatus === 'picked_from_school';
 
     }
 
   }
 
- return {
+  return {
 
-  rideStarted: !!ride,
+    rideStarted:
+      Boolean(ride),
 
-  rideType:
-    ride?.rideType || null,
+    rideType:
+      ride?.rideType || null,
 
-  status:
-    ride?.status || 'ended',
+    status:
+      ride?.status || 'ended',
 
-  rideId:
-    ride?.rideId || null,
+    rideId:
+      ride?.rideId || null,
 
-  studentStatus,
+    studentStatus,
 
-  trackingAvailable,
+    trackingAvailable,
 
-  journeyTimes
+    journeyTimes
 
-};
+  };
 
 };
 
@@ -1059,212 +1069,290 @@ exports.dropStudentSchool = async (
 
 };
 
-// =====================================================
-// EVENING PICKUP FROM SCHOOL
-// School → Home
-// =====================================================
-
-exports.pickStudentFromSchool =
-  async (
-    driverId,
-    parentId
-  ) => {
-
-    // -------------------------------------------------
-    // Make sure evening ride is active
-    // -------------------------------------------------
-
-    await ensureActiveRide(
-      driverId,
-      'evening'
-    );
-
-    // -------------------------------------------------
-    // Current server timestamp
-    // -------------------------------------------------
-
-    const now = new Date();
-
-    // -------------------------------------------------
-    // Update Parent
-    // -------------------------------------------------
-
-    const parent =
-      await Parent.findOneAndUpdate(
-        {
-          parentId,
-          driverId,
-          attendance: true,
-
-          eveningStatus:
-            'waiting_school_finish'
-        },
-        {
-          $set: {
-
-            eveningStatus:
-              'picked_from_school',
-
-            eveningPickedFromSchoolAt:
-              now
-
-          }
-        },
-        {
-          new: true
-        }
-      );
-
-    // -------------------------------------------------
-    // Validation
-    // -------------------------------------------------
-
-    if (!parent) {
-
-      throw new Error(
-        'Present student is not waiting for school pickup'
-      );
-
-    }
-
-    // -------------------------------------------------
-    // CREATE / GET DAILY JOURNEY
-    // -------------------------------------------------
-
-    const journey =
-      await getOrCreateStudentJourney(
-        parent,
-        now
-      );
-
-    // -------------------------------------------------
-    // SAVE EVENING PICKUP TIME
-    // -------------------------------------------------
-
-    journey.evening.pickedFromSchoolAt =
-      now;
-
-    await journey.save();
-
-    // -------------------------------------------------
-    // RESPONSE
-    // -------------------------------------------------
-
-    return {
-
-      parent,
-
-      timestamp:
-        now
-
-    };
-
-  };
-
-// =====================================================
-// EVENING DROP AT HOME
-// School → Home
-// =====================================================
-
-exports.dropStudentHome =
-  async (
-    driverId,
-    parentId
-  ) => {
-
-    // -------------------------------------------------
-    // Make sure evening ride is active
-    // -------------------------------------------------
-
-    await ensureActiveRide(
-      driverId,
-      'evening'
-    );
-
-    // -------------------------------------------------
-    // Current server timestamp
-    // -------------------------------------------------
-
-    const now = new Date();
-
-    // -------------------------------------------------
-    // Update Parent
-    // -------------------------------------------------
-
-    const parent =
-      await Parent.findOneAndUpdate(
-        {
-          parentId,
-          driverId,
-
-          eveningStatus:
-            'picked_from_school'
-        },
-        {
-          $set: {
-
-            eveningStatus:
-              'dropped_at_home',
-
-            eveningDroppedAtHomeAt:
-              now
-
-          }
-        },
-        {
-          new: true
-        }
-      );
-
-    // -------------------------------------------------
-    // Validation
-    // -------------------------------------------------
-
-    if (!parent) {
-
-      throw new Error(
-        'Student is not currently on the return van'
-      );
-
-    }
-
-    // -------------------------------------------------
-    // CREATE / GET DAILY JOURNEY
-    // -------------------------------------------------
-
-    const journey =
-      await getOrCreateStudentJourney(
-        parent,
-        now
-      );
-
-    // -------------------------------------------------
-    // SAVE HOME DROP TIME
-    // -------------------------------------------------
-
-    journey.evening.droppedAtHomeAt =
-      now;
-
-    await journey.save();
-
-    // -------------------------------------------------
-    // RESPONSE
-    // -------------------------------------------------
-
-    return {
-
-      parent,
-
-      timestamp:
-        now
-
-    };
-
-  };
+exports.pickStudentFromSchool = async (
+  driverId,
+  parentId
+) => {
 
   // =====================================================
-// GET DAILY STUDENT JOURNEY REPORT
-// =====================================================
+  // 1. ACTIVE EVENING RIDE REQUIRED
+  // =====================================================
+
+  const ride =
+    await ensureActiveRide(
+      driverId,
+      'evening'
+    );
+
+  // =====================================================
+  // 2. CURRENT SERVER TIME
+  // =====================================================
+
+  const now =
+    new Date();
+
+  // =====================================================
+  // 3. ATOMIC PICKUP
+  // =====================================================
+
+  const parent =
+    await Parent.findOneAndUpdate(
+      {
+        parentId,
+        driverId,
+
+        attendance: true,
+
+        eveningStatus:
+          'waiting_school_finish'
+      },
+
+      {
+        $set: {
+
+          eveningStatus:
+            'picked_from_school',
+
+          eveningPickedFromSchoolAt:
+            now,
+
+          eveningDroppedAtHomeAt:
+            null
+
+        }
+      },
+
+      {
+        new: true,
+        runValidators: true
+      }
+    );
+
+  // =====================================================
+  // 4. VALIDATION
+  // =====================================================
+
+  if (!parent) {
+
+    const currentParent =
+      await Parent.findOne({
+        parentId,
+        driverId
+      });
+
+    if (!currentParent) {
+
+      throw new Error(
+        'Student is not assigned to this driver'
+      );
+
+    }
+
+    if (
+      currentParent.attendance !== true
+    ) {
+
+      throw new Error(
+        'Absent student cannot be picked from school'
+      );
+
+    }
+
+    if (
+      currentParent.eveningStatus ===
+      'picked_from_school'
+    ) {
+
+      throw new Error(
+        'Student has already been picked from school'
+      );
+
+    }
+
+    if (
+      currentParent.eveningStatus ===
+      'dropped_at_home'
+    ) {
+
+      throw new Error(
+        'Student has already been dropped at home'
+      );
+
+    }
+
+    throw new Error(
+      `Student is not waiting at school. Current status: ${
+        currentParent.eveningStatus || 'unknown'
+      }`
+    );
+
+  }
+
+  // =====================================================
+  // 5. DAILY JOURNEY
+  // =====================================================
+
+  const journey =
+    await getOrCreateStudentJourney(
+      parent,
+      now
+    );
+
+  journey.evening.pickedFromSchoolAt =
+    now;
+
+  journey.evening.droppedAtHomeAt =
+    null;
+
+  await journey.save();
+
+  // =====================================================
+  // 6. RESPONSE
+  // =====================================================
+
+  return {
+
+    parent,
+
+    timestamp:
+      now,
+
+    rideId:
+      ride.rideId
+
+  };
+
+};
+
+
+exports.dropStudentHome = async (
+  driverId,
+  parentId
+) => {
+
+  // =====================================================
+  // ACTIVE EVENING RIDE REQUIRED
+  // =====================================================
+
+  const ride =
+    await ensureActiveRide(
+      driverId,
+      'evening'
+    );
+
+  const now =
+    new Date();
+
+  // =====================================================
+  // ONLY PICKED STUDENTS CAN BE DROPPED
+  // =====================================================
+
+  const parent =
+    await Parent.findOneAndUpdate(
+      {
+        parentId,
+        driverId,
+
+        attendance: true,
+
+        eveningStatus:
+          'picked_from_school'
+      },
+
+      {
+        $set: {
+
+          eveningStatus:
+            'dropped_at_home',
+
+          eveningDroppedAtHomeAt:
+            now
+
+        }
+      },
+
+      {
+        new: true,
+        runValidators: true
+      }
+    );
+
+  // =====================================================
+  // VALIDATION
+  // =====================================================
+
+  if (!parent) {
+
+    const currentParent =
+      await Parent.findOne({
+        parentId,
+        driverId
+      });
+
+    if (!currentParent) {
+
+      throw new Error(
+        'Student is not assigned to this driver'
+      );
+
+    }
+
+    if (
+      currentParent.eveningStatus ===
+      'waiting_school_finish'
+    ) {
+
+      throw new Error(
+        'Student must be picked from school before dropping at home'
+      );
+
+    }
+
+    if (
+      currentParent.eveningStatus ===
+      'dropped_at_home'
+    ) {
+
+      throw new Error(
+        'Student has already been dropped at home'
+      );
+
+    }
+
+    throw new Error(
+      'Student is not currently on the return van'
+    );
+
+  }
+
+  // =====================================================
+  // DAILY JOURNEY
+  // =====================================================
+
+  const journey =
+    await getOrCreateStudentJourney(
+      parent,
+      now
+    );
+
+  journey.evening.droppedAtHomeAt =
+    now;
+
+  await journey.save();
+
+  return {
+
+    parent,
+
+    timestamp:
+      now,
+
+    rideId:
+      ride.rideId
+
+  };
+
+};
 
 exports.getStudentJourneyReport =
   async (

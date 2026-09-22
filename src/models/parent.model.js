@@ -1,22 +1,28 @@
 const mongoose = require('mongoose');
 
 const parentSchema = new mongoose.Schema(
-
   {
+    // =====================================================
+    // IDENTITY
+    // =====================================================
 
     parentId: {
       type: String,
-      unique: true
+      unique: true,
+      index: true
     },
 
     role: {
       type: String,
-      default: 'parent'
+      default: 'parent',
+      enum: ['parent']
     },
 
     driverId: {
       type: String,
-      required: true
+      required: true,
+      index: true,
+      trim: true
     },
 
     fcmToken: {
@@ -24,13 +30,191 @@ const parentSchema = new mongoose.Schema(
       default: ''
     },
 
+    isVerified: {
+      type: Boolean,
+      default: false
+    },
+
+    // =====================================================
+    // PARENT DETAILS
+    // =====================================================
+
+    name: {
+      type: String,
+      required: true,
+      trim: true
+    },
+
+    mobileNumber: {
+      type: String,
+      required: true,
+      unique: true,
+      index: true,
+      trim: true
+    },
+
+    password: {
+      type: String
+    },
+
+    email: {
+      type: String,
+      trim: true,
+      lowercase: true,
+      default: null
+    },
+
+    emergencyContact: {
+      type: String,
+      trim: true,
+      default: null
+    },
+
+    // =====================================================
+    // STUDENT
+    // =====================================================
+
+    studentName: {
+      type: String,
+      required: true,
+      trim: true
+    },
+
+    studentClass: {
+      type: String,
+      trim: true,
+      default: ''
+    },
+
+    schoolName: {
+      type: String,
+      required: true,
+      trim: true
+    },
+
+    // =====================================================
+    // PICKUP / HOME
+    // =====================================================
+
+    pickupArea: {
+      type: String,
+      required: true,
+      trim: true
+    },
+
+    pickupAddress: {
+      type: String,
+      trim: true,
+      default: ''
+    },
+
+    pickupLocation: {
+      latitude: {
+        type: Number,
+        required: true,
+        min: -90,
+        max: 90
+      },
+
+      longitude: {
+        type: Number,
+        required: true,
+        min: -180,
+        max: 180
+      }
+    },
+
+    // =====================================================
+    // SCHOOL
+    // =====================================================
+
+    dropArea: {
+      type: String,
+      required: true,
+      trim: true
+    },
+
+    schoolAddress: {
+      type: String,
+      trim: true,
+      default: ''
+    },
+
+    schoolLocation: {
+      latitude: {
+        type: Number,
+        required: true,
+        min: -90,
+        max: 90
+      },
+
+      longitude: {
+        type: Number,
+        required: true,
+        min: -180,
+        max: 180
+      }
+    },
+
+    // =====================================================
+    // SCHOOL METADATA
+    // =====================================================
+
+    school: {
+      name: {
+        type: String,
+        trim: true,
+        default: ''
+      },
+
+      address: {
+        type: String,
+        trim: true,
+        default: ''
+      },
+
+      latitude: {
+        type: Number,
+        default: null
+      },
+
+      longitude: {
+        type: Number,
+        default: null
+      },
+
+      placeId: {
+        type: String,
+        default: null
+      },
+
+      city: {
+        type: String,
+        default: null
+      },
+
+      state: {
+        type: String,
+        default: null
+      },
+
+      postcode: {
+        type: String,
+        default: null
+      }
+    },
+
+    // =====================================================
+    // ATTENDANCE
+    // =====================================================
+
     attendance: {
       type: Boolean,
       default: false
     },
 
     // =====================================================
-    // STUDENT JOURNEY TIMESTAMPS
+    // MORNING JOURNEY
     // =====================================================
 
     morningPickedUpAt: {
@@ -43,21 +227,7 @@ const parentSchema = new mongoose.Schema(
       default: null
     },
 
-    eveningPickedFromSchoolAt: {
-      type: Date,
-      default: null
-    },
-
-    eveningDroppedAtHomeAt: {
-      type: Date,
-      default: null
-    },
-    // -------------------------
-    // Morning Ride
-    // -------------------------
-
     morningStatus: {
-
       type: String,
 
       enum: [
@@ -67,15 +237,23 @@ const parentSchema = new mongoose.Schema(
       ],
 
       default: 'waiting'
-
     },
 
-    // -------------------------
-    // Evening Ride
-    // -------------------------
+    // =====================================================
+    // EVENING JOURNEY
+    // =====================================================
+
+    eveningPickedFromSchoolAt: {
+      type: Date,
+      default: null
+    },
+
+    eveningDroppedAtHomeAt: {
+      type: Date,
+      default: null
+    },
 
     eveningStatus: {
-
       type: String,
 
       enum: [
@@ -85,84 +263,27 @@ const parentSchema = new mongoose.Schema(
       ],
 
       default: 'waiting_school_finish'
-
-    },
-
-  
-
-    name: {
-
-      type: String,
-
-      required: true,
-
-      trim: true
-
-    },
-
-    mobileNumber: {
-
-      type: String,
-
-      required: true,
-
-      unique: true
-
-    },
-
-    password: {
-      type: String
-    },
-
-    studentName: {
-
-      type: String,
-
-      required: true
-
-    },
-
-    schoolName: {
-
-      type: String,
-
-      required: true
-
-    },
-
-    pickupArea: {
-
-      type: String,
-
-      required: true
-
-    },
-
-    dropArea: {
-
-      type: String,
-
-      required: true
-
-    },
-
-    isVerified: {
-
-      type: Boolean,
-
-      default: false
-
     }
-
   },
 
   {
     timestamps: true
   }
-
 );
 
-module.exports = mongoose.model(
-  'Parent',
-  parentSchema
-);
+
+// =====================================================
+// INDEXES
+// =====================================================
+
+parentSchema.index({
+  driverId: 1,
+  attendance: 1
+});
+
+
+module.exports =
+  mongoose.model(
+    'Parent',
+    parentSchema
+  );

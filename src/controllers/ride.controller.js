@@ -1067,55 +1067,87 @@ if (rideType === 'evening') {
 }
 
 
-    return res.status(200).json({
+ return res.status(200).json({
 
-      success: true,
+  success: true,
 
-      trackingAvailable: true,
-data: {
+  trackingAvailable: true,
 
-  rideId:
-    ride.rideId,
+  data: {
 
-  driverId:
-    ride.driverId,
+    rideId:
+      ride.rideId,
 
-  rideType:
-    ride.rideType,
+    driverId:
+      ride.driverId,
 
-  latitude:
-    ride.currentLatitude,
+    rideType:
+      ride.rideType,
 
-  longitude:
-    ride.currentLongitude,
+    latitude:
+      ride.currentLatitude,
 
-  startTime:
-    ride.startTime,
+    longitude:
+      ride.currentLongitude,
 
-  status:
-    ride.status,
+    startTime:
+      ride.startTime,
 
-  updatedAt:
-    ride.updatedAt,
+    status:
+      ride.status,
 
-  journeyTimes: {
+    updatedAt:
+      ride.updatedAt,
 
-    morningPickedUpAt:
-      parent.morningPickedUpAt || null,
+    // =================================================
+    // ROUTE
+    // =================================================
 
-    morningDroppedAtSchoolAt:
-      parent.morningDroppedAtSchoolAt || null,
+    route: {
 
-    eveningPickedFromSchoolAt:
-      parent.eveningPickedFromSchoolAt || null,
+      pickupLocation:
+        parent.pickupLocation
+          ? {
+              latitude:
+                parent.pickupLocation.latitude,
 
-    eveningDroppedAtHomeAt:
-      parent.eveningDroppedAtHomeAt || null
+              longitude:
+                parent.pickupLocation.longitude
+            }
+          : null,
 
+      schoolLocation:
+        parent.schoolLocation
+          ? {
+              latitude:
+                parent.schoolLocation.latitude,
+
+              longitude:
+                parent.schoolLocation.longitude
+            }
+          : null
+    },
+
+    // =================================================
+    // JOURNEY TIMES
+    // =================================================
+
+    journeyTimes: {
+
+      morningPickedUpAt:
+        parent.morningPickedUpAt,
+
+      morningDroppedAtSchoolAt:
+        parent.morningDroppedAtSchoolAt,
+
+      eveningPickedFromSchoolAt:
+        parent.eveningPickedFromSchoolAt,
+
+      eveningDroppedAtHomeAt:
+        parent.eveningDroppedAtHomeAt
+    }
   }
-
-}
-    });
+});
 
   }
 
