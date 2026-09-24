@@ -12,15 +12,157 @@ const Attendance = require('../models/attendance.model');
 // ADD PARENT
 // =====================================================
 
+const createDriverId = async () => {
+  // Keep generating until the application-level driverId is unique.
+  // The MongoDB unique index remains the final protection against races.
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    const candidate =
+      `DRV${Date.now()}${Math.floor(100 + Math.random() * 900)}`;
+
+    const exists = await Driver.exists({
+      driverId: candidate
+    });
+
+    if (!exists) {
+      return candidate;
+    }
+  }
+
+  throw new Error(
+    'Unable to generate a unique Driver ID'
+  );
+};
+
+const resolveOrCreateDriver = async (data) => {
+  const suppliedDriverId =
+    String(data?.driverId || '').trim();
+
+  const driverMobile =
+    String(
+      data?.driverMobile ||
+      data?.mobileNumber ||
+      ''
+    ).replace(/\D/g, '');
+
+  const driverName =
+    String(data?.driverName || '').trim();
+
+  if (!driverMobile) {
+    throw new Error(
+      'Driver mobile number is required when registering a new parent'
+    );
+  }
+
+  if (!/^[6-9][0-9]{9}$/.test(driverMobile)) {
+    throw new Error(
+      'Valid driver mobile number is required'
+    );
+  }
+
+  // ---------------------------------------------------
+  // 1. Existing driver by Driver ID
+  // ---------------------------------------------------
+  if (suppliedDriverId) {
+    const byId = await Driver.findOne({
+      driverId: suppliedDriverId
+    });
+
+    if (byId) {
+      return byId;
+    }
+  }
+
+  // ---------------------------------------------------
+  // 2. Existing driver by mobile number
+  // ---------------------------------------------------
+  const byMobile = await Driver.findOne({
+    mobileNumber: driverMobile
+  });
+
+  if (byMobile) {
+    return byMobile;
+  }
+
+  // ---------------------------------------------------
+  // 3. New driver
+  //
+  // Parent only knows the driver's mobile number and
+  // optionally their name. Vehicle and route are NOT
+  // required during parent onboarding.
+  // ---------------------------------------------------
+  const generatedDriverId =
+    await createDriverId();
+
+  const newDriver = await Driver.create({
+    driverId: generatedDriverId,
+
+    role: 'driver',
+
+    name:
+      driverName ||
+      'Pending Driver',
+
+    mobileNumber: driverMobile,
+
+    password: null,
+
+    vehicleNumber:
+      String(data?.driverVehicleNumber || '').trim() ||
+      'Pending',
+
+    routeArea:
+      String(data?.driverRouteArea || '').trim() ||
+      'Pending',
+
+    isVerified: false,
+
+    registrationSource:
+      'parent_onboarding'
+  });
+
+  return newDriver;
+};
+
+
+// =====================================================
+// ADD PARENT
+// =====================================================
+
 const addParent = async (data) => {
 
   // ===================================================
   // DRIVER
   // ===================================================
+  //
+  // IMPORTANT:
+  // Parent registration may provide only the driver's
+  // mobile number. If the driver does not exist, create
+  // the driver here and use the generated driverId.
+  // This guarantees Parent.driverId is never null.
+  // ===================================================
 
-  if (!data.driverId) {
+  const existingDriverId =
+    String(data?.driverId || '').trim();
+
+  const driverMobile =
+    String(data?.driverMobile || '').replace(/\D/g, '');
+
+  const existingDriver =
+    existingDriverId
+      ? await Driver.findOne({ driverId: existingDriverId })
+      : await Driver.findOne({ mobileNumber: driverMobile });
+
+  const driver =
+    existingDriver ||
+    await resolveOrCreateDriver(data);
+
+  const driverWasCreatedForParent =
+    !existingDriver &&
+    driver?.registrationSource === 'parent_onboarding';
+
+  if (!driver?.driverId) {
     throw new Error(
-      'Driver Id is required'
+      'Unable to resolve or create driver'
     );
   }
 
@@ -100,43 +242,81 @@ const addParent = async (data) => {
   // CREATE PARENT
   // ===================================================
 
-  const parent =
-    await Parent.create({
+  const parentData = {
+    ...data,
 
-      ...data,
+    // Never trust a null/empty frontend driverId.
+    // The resolved/generated server driverId is authoritative.
+    driverId:
+      driver.driverId,
 
-      parentId,
+    // Keep these normalized values on Parent too.
+    driverMobile:
+      driver.mobileNumber,
 
-      role: 'parent',
+    driverName:
+      driver.name,
 
-      pickupLocation: {
-        latitude:
-          pickupLatitude,
+    driverVehicleNumber:
+      driver.vehicleNumber,
 
-        longitude:
-          pickupLongitude
-      },
+    driverRouteArea:
+      driver.routeArea,
 
-      schoolLocation: {
-        latitude:
-          schoolLatitude,
+    parentId,
 
-        longitude:
-          schoolLongitude
-      },
+    role: 'parent',
 
-      attendance: false,
+    pickupLocation: {
+      latitude:
+        pickupLatitude,
 
-      morningStatus:
-        'waiting',
+      longitude:
+        pickupLongitude
+    },
 
-      eveningStatus:
-        'waiting_school_finish'
-    });
+    schoolLocation: {
+      latitude:
+        schoolLatitude,
 
-  return parent;
+      longitude:
+        schoolLongitude
+    },
+
+    attendance: false,
+
+    morningStatus:
+      'waiting',
+
+    eveningStatus:
+      'waiting_school_finish'
+  };
+
+  try {
+    const parent =
+      await Parent.create(
+        parentData
+      );
+
+    return parent;
+  } catch (error) {
+    // If this request created a brand-new pending driver but the
+    // parent could not be created, roll the driver back so we do not
+    // leave an orphaned driver record behind.
+    if (driverWasCreatedForParent && driver?._id) {
+      try {
+        await Driver.deleteOne({ _id: driver._id });
+      } catch (cleanupError) {
+        console.error(
+          'Failed to rollback pending driver after parent registration error:',
+          cleanupError
+        );
+      }
+    }
+
+    throw error;
+  }
 };
-
 
 module.exports = {
   addParent

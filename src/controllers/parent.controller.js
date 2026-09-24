@@ -36,13 +36,29 @@ const addParent = async (req, res) => {
     const parent =
       await parentService.addParent(req.body);
 
+    const responseData = {
+      ...(
+        typeof parent?.toObject === 'function'
+          ? parent.toObject()
+          : parent
+      )
+    };
+
+    delete responseData.password;
+
     return res.status(201).json({
 
       success: true,
 
-      message: 'Parent added successfully',
+      message:
+        parent?.driverCreated
+          ? 'Parent registered and new driver created successfully'
+          : 'Parent added successfully',
 
-      data: parent
+      driverCreated:
+        Boolean(parent?.driverCreated),
+
+      data: responseData
 
     });
 
@@ -62,7 +78,24 @@ const addParent = async (req, res) => {
 
     }
 
-    return res.status(500).json({
+    const statusCode =
+      [
+        'Parent already exists',
+        'Driver ID is already assigned to another driver'
+      ].includes(error.message)
+        ? 409
+        : [
+            'Invalid parent mobile number',
+            'Driver mobile number is required when adding a new driver',
+            'Invalid driver mobile number',
+            'Valid pickup location coordinates are required',
+            'Valid school location coordinates are required',
+            'Registration data is required'
+          ].includes(error.message)
+            ? 400
+            : 500;
+
+    return res.status(statusCode).json({
 
       success: false,
 

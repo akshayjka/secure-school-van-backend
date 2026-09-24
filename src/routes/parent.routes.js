@@ -5,7 +5,6 @@ const router = express.Router();
 const parentController =
   require('../controllers/parent.controller');
 
-
 // =====================================================
 // PARENT MANAGEMENT
 // =====================================================
@@ -20,7 +19,6 @@ router.get(
   parentController.getAllParents
 );
 
-
 // =====================================================
 // DASHBOARD
 // =====================================================
@@ -29,15 +27,6 @@ router.get(
   '/dashboard/:parentId',
   parentController.getDashboard
 );
-
-
-// =====================================================
-// MONTHLY ATTENDANCE
-// IMPORTANT: BEFORE /:id
-// =====================================================
-
-
-
 
 // =====================================================
 // STUDENT STATUS
@@ -48,7 +37,6 @@ router.put(
   parentController.updateStudentStatus
 );
 
-
 // =====================================================
 // FCM TOKEN
 // =====================================================
@@ -58,12 +46,9 @@ router.post(
   parentController.updateFcmToken
 );
 
-
 // =====================================================
-// GENERIC PARENT ID ROUTES
-// IMPORTANT: THESE MUST BE LAST
+// ATTENDANCE
 // =====================================================
-
 
 router.put(
   '/attendance',
@@ -74,6 +59,11 @@ router.get(
   '/attendance/:parentId',
   parentController.getMonthlyAttendance
 );
+
+// =====================================================
+// GENERIC PARENT ID ROUTES
+// IMPORTANT: KEEP THESE LAST
+// =====================================================
 
 router.get(
   '/:id',
@@ -89,8 +79,5 @@ router.delete(
   '/:id',
   parentController.deleteParent
 );
-
-
-// =====================================================
 
 module.exports = router;

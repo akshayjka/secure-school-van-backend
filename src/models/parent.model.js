@@ -1,5 +1,23 @@
 const mongoose = require('mongoose');
 
+const locationSchema = new mongoose.Schema(
+  {
+    latitude: {
+      type: Number,
+      required: true,
+      min: -90,
+      max: 90
+    },
+    longitude: {
+      type: Number,
+      required: true,
+      min: -180,
+      max: 180
+    }
+  },
+  { _id: false }
+);
+
 const parentSchema = new mongoose.Schema(
   {
     // =====================================================
@@ -9,7 +27,8 @@ const parentSchema = new mongoose.Schema(
     parentId: {
       type: String,
       unique: true,
-      index: true
+      index: true,
+      trim: true
     },
 
     role: {
@@ -23,6 +42,18 @@ const parentSchema = new mongoose.Schema(
       required: true,
       index: true,
       trim: true
+    },
+
+    driverMobile: {
+      type: String,
+      trim: true,
+      default: ''
+    },
+
+    driverName: {
+      type: String,
+      trim: true,
+      default: ''
     },
 
     fcmToken: {
@@ -54,8 +85,9 @@ const parentSchema = new mongoose.Schema(
     },
 
     password: {
-      type: String
-    },
+      type: String,
+      default: null,
+      },
 
     email: {
       type: String,
@@ -86,6 +118,12 @@ const parentSchema = new mongoose.Schema(
       default: ''
     },
 
+    studentSection: {
+      type: String,
+      trim: true,
+      default: ''
+    },
+
     schoolName: {
       type: String,
       required: true,
@@ -109,19 +147,8 @@ const parentSchema = new mongoose.Schema(
     },
 
     pickupLocation: {
-      latitude: {
-        type: Number,
-        required: true,
-        min: -90,
-        max: 90
-      },
-
-      longitude: {
-        type: Number,
-        required: true,
-        min: -180,
-        max: 180
-      }
+      type: locationSchema,
+      required: true
     },
 
     // =====================================================
@@ -141,19 +168,8 @@ const parentSchema = new mongoose.Schema(
     },
 
     schoolLocation: {
-      latitude: {
-        type: Number,
-        required: true,
-        min: -90,
-        max: 90
-      },
-
-      longitude: {
-        type: Number,
-        required: true,
-        min: -180,
-        max: 180
-      }
+      type: locationSchema,
+      required: true
     },
 
     // =====================================================
@@ -229,13 +245,11 @@ const parentSchema = new mongoose.Schema(
 
     morningStatus: {
       type: String,
-
       enum: [
         'waiting',
         'picked_up',
         'dropped_at_school'
       ],
-
       default: 'waiting'
     },
 
@@ -255,22 +269,19 @@ const parentSchema = new mongoose.Schema(
 
     eveningStatus: {
       type: String,
-
       enum: [
         'waiting_school_finish',
         'picked_from_school',
         'dropped_at_home'
       ],
-
       default: 'waiting_school_finish'
     }
   },
-
   {
-    timestamps: true
+    timestamps: true,
+    strict: true
   }
 );
-
 
 // =====================================================
 // INDEXES
@@ -281,9 +292,9 @@ parentSchema.index({
   attendance: 1
 });
 
+parentSchema.index({
+  mobileNumber: 1
+});
 
 module.exports =
-  mongoose.model(
-    'Parent',
-    parentSchema
-  );
+  mongoose.model('Parent', parentSchema);

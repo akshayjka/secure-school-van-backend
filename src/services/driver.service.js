@@ -1,14 +1,40 @@
 const Driver = require('../models/driver.model');
-
 const Parent = require('../models/parent.model');
 
-// ================= REGISTER DRIVER =================
+// =====================================================
+// DRIVER ID
+// =====================================================
+
+const createDriverId = async () => {
+  const count = await Driver.countDocuments();
+  let sequence = count + 1;
+
+  while (true) {
+    const driverId =
+      `DRV${String(sequence).padStart(6, '0')}`;
+
+    const exists =
+      await Driver.exists({ driverId });
+
+    if (!exists) {
+      return driverId;
+    }
+
+    sequence += 1;
+  }
+};
+
+// =====================================================
+// REGISTER DRIVER
+// =====================================================
 
 const registerDriver = async (data) => {
+  const mobileNumber =
+    String(data?.mobileNumber || '')
+      .replace(/\D/g, '');
 
-  const existingDriver = await Driver.findOne({
-    mobileNumber: data.mobileNumber
-  });
+  const existingDriver =
+    await Driver.findOne({ mobileNumber });
 
   if (existingDriver) {
     return {
@@ -17,10 +43,11 @@ const registerDriver = async (data) => {
     };
   }
 
-  const count = await Driver.countDocuments();
-
   const driverId =
-    `DRV${String(count + 1).padStart(6, '0')}`;
+    await createDriverId();
+
+  const count =
+    await Driver.countDocuments();
 
   const referralCode =
     `DRV${1000 + count + 1}`;
@@ -28,13 +55,13 @@ const registerDriver = async (data) => {
   let referredByDriver = null;
 
   if (data.referredByCode) {
-
-    referredByDriver = await Driver.findOne({
-      referralCode: data.referredByCode
-    });
+    referredByDriver =
+      await Driver.findOne({
+        referralCode:
+          data.referredByCode
+      });
 
     if (!referredByDriver) {
-
       return {
         success: false,
         message: 'Invalid referral code'
@@ -42,24 +69,29 @@ const registerDriver = async (data) => {
     }
   }
 
-  const driver = await Driver.create({
+  const driver =
+    await Driver.create({
+      ...data,
 
-    ...data,
+      mobileNumber,
 
-    driverId,
+      driverId,
 
-    referralCode,
+      referralCode,
 
-    referredByCode:
-      referredByDriver?.referralCode || null,
+      registrationSource:
+        'driver',
 
-    referredByDriverId:
-      referredByDriver?._id || null
+      referredByCode:
+        referredByDriver?.referralCode ||
+        null,
 
-  });
+      referredByDriverId:
+        referredByDriver?._id ||
+        null
+    });
 
   if (referredByDriver) {
-
     await Driver.findByIdAndUpdate(
       referredByDriver._id,
       {
@@ -72,47 +104,112 @@ const registerDriver = async (data) => {
 
   return {
     success: true,
-    message: 'Driver registered successfully',
+    message:
+      'Driver registered successfully',
     data: driver
   };
 };
 
-// ======= Get Referal Details =======================
+// =====================================================
+// FIND DRIVER
+// =====================================================
 
-const getReferralDetails = async (driverId) => {
+const findDriver = async ({
+  driverId,
+  mobile
+} = {}) => {
+  const normalizedMobile =
+    String(mobile || '')
+      .replace(/\D/g, '');
 
-  const driver = await Driver.findOne(
-    { driverId },
-    {
-      driverId: 1,
-      name: 1,
-      referralCode: 1,
-      referralCount: 1,
-      referredByCode: 1
-    }
-  );
+  const normalizedDriverId =
+    String(driverId || '')
+      .trim();
+
+  const conditions = [];
+
+  if (normalizedDriverId) {
+    conditions.push({
+      driverId:
+        normalizedDriverId
+    });
+  }
+
+  if (normalizedMobile) {
+    conditions.push({
+      mobileNumber:
+        normalizedMobile
+    });
+  }
+
+  if (conditions.length === 0) {
+    throw new Error(
+      'Driver ID or mobile number is required'
+    );
+  }
+
+  const driver =
+    await Driver.findOne({
+      $or: conditions
+    }).select(
+      '+password'
+    );
 
   if (!driver) {
-    throw new Error('Driver not found');
+    throw new Error(
+      'Driver not found'
+    );
   }
 
   return driver;
 };
 
-// ========== Get Referred Drivers ==================
-const getReferredDrivers = async (driverId) => {
+// =====================================================
+// REFERRAL DETAILS
+// =====================================================
 
-  const driver = await Driver.findOne({
-    driverId
-  });
+const getReferralDetails = async (driverId) => {
+  const driver =
+    await Driver.findOne(
+      { driverId },
+      {
+        driverId: 1,
+        name: 1,
+        referralCode: 1,
+        referralCount: 1,
+        referredByCode: 1
+      }
+    );
 
   if (!driver) {
-    throw new Error('Driver not found');
+    throw new Error(
+      'Driver not found'
+    );
   }
 
-  const referrals = await Driver.find(
+  return driver;
+};
+
+// =====================================================
+// REFERRED DRIVERS
+// =====================================================
+
+const getReferredDrivers = async (driverId) => {
+  const driver =
+    await Driver.findOne({
+      driverId
+    });
+
+  if (!driver) {
+    throw new Error(
+      'Driver not found'
+    );
+  }
+
+  return Driver.find(
     {
-      referredByCode: driver.referralCode
+      referredByCode:
+        driver.referralCode
     },
     {
       driverId: 1,
@@ -122,16 +219,14 @@ const getReferredDrivers = async (driverId) => {
       createdAt: 1
     }
   );
-
-  return referrals;
 };
 
-
-// ================= GET ALL DRIVERS =================
+// =====================================================
+// GET ALL DRIVERS
+// =====================================================
 
 const getAllDrivers = async () => {
-
-  return await Driver.find(
+  return Driver.find(
     {},
     {
       _id: 1,
@@ -141,173 +236,165 @@ const getAllDrivers = async () => {
       mobileNumber: 1,
       vehicleNumber: 1,
       routeArea: 1,
-      isVerified: 1
+      isVerified: 1,
+      registrationSource: 1
     }
-  );
+  ).sort({
+    createdAt: -1
+  });
 };
-// ================= ADD DRIVER =================
+
+// =====================================================
+// ADD DRIVER - ADMIN
+// =====================================================
 
 const addDriver = async (data) => {
+  const mobileNumber =
+    String(data?.mobileNumber || '')
+      .replace(/\D/g, '');
 
-  const existingDriver = await Driver.findOne({
-
-    mobileNumber: data.mobileNumber
-
-  });
-
-  if (existingDriver) {
-
+  if (!/^[6-9]\d{9}$/.test(mobileNumber)) {
     throw new Error(
-
-      'Driver already exists'
-
+      'Invalid driver mobile number'
     );
-
   }
 
-  const count = await Driver.countDocuments();
+  const existingDriver =
+    await Driver.findOne({
+      mobileNumber
+    });
 
-  const driverId = `DRV${String(
+  if (existingDriver) {
+    throw new Error(
+      'Driver already exists'
+    );
+  }
 
-    count + 1
+  const driverId =
+    await createDriverId();
 
-  ).padStart(6, '0')}`;
-
-  const driver = await Driver.create({
-
+  return Driver.create({
     ...data,
 
     driverId,
 
+    mobileNumber,
+
     role: 'driver',
 
-    password: null
+    password: null,
 
+    registrationSource:
+      'admin'
   });
-
-  return driver;
-
 };
 
-// ===================Get DashBoard =====================
+// =====================================================
+// DRIVER DASHBOARD
+// =====================================================
+
 const getDashboard = async (driverId) => {
-
-  const driver = await Driver.findOne({
-
-    driverId
-
-  });
+  const driver =
+    await Driver.findOne({
+      driverId
+    });
 
   if (!driver) {
-
     throw new Error(
-
       'Driver not found'
+    );
+  }
 
+  const students =
+    await Parent.find(
+      { driverId },
+      {
+        _id: 0,
+        parentId: 1,
+        name: 1,
+        mobileNumber: 1,
+        studentName: 1,
+        studentClass: 1,
+        studentSection: 1,
+        schoolName: 1,
+        pickupArea: 1,
+        dropArea: 1,
+        attendance: 1,
+        morningStatus: 1,
+        morningPickedUpAt: 1,
+        morningDroppedAtSchoolAt: 1,
+        eveningStatus: 1,
+        eveningPickedFromSchoolAt: 1,
+        eveningDroppedAtHomeAt: 1
+      }
     );
 
-  }
+  const present =
+    students.filter(
+      student => student.attendance
+    ).length;
 
- const students = await Parent.find(
-  {
-    driverId
-  },
-  {
-    _id: 0,
-    parentId: 1,
-    name: 1,
-    mobileNumber: 1,
-    studentName: 1,
-    schoolName: 1,
-    pickupArea: 1,
-    dropArea: 1,
-    attendance: 1,
-    // IMPORTANT
-    morningStatus: 1,
-    morningPickedUpAt: 1,
-    morningDroppedAtSchoolAt: 1,
-    eveningStatus: 1,
-    eveningPickedFromSchoolAt: 1,
-    eveningDroppedAtHomeAt: 1
-  }
-);
-
-  const present = students.filter(
-
-    student => student.attendance
-
-  ).length;
-
-  const absent = students.filter(
-
-    student => !student.attendance
-
-  ).length;
+  const absent =
+    students.filter(
+      student => !student.attendance
+    ).length;
 
   return {
-
     success: true,
 
     driver: {
-
-      driverId: driver.driverId,
-
-      name: driver.name,
-
-      vehicleNumber: driver.vehicleNumber,
-
-      routeArea: driver.routeArea
-
+      driverId:
+        driver.driverId,
+      name:
+        driver.name,
+      vehicleNumber:
+        driver.vehicleNumber,
+      routeArea:
+        driver.routeArea,
+      isVerified:
+        driver.isVerified
     },
 
     students,
 
     todayStats: {
-
       present,
-
       absent,
-
-      total: students.length
-
+      total:
+        students.length
     }
-
   };
-
 };
 
-// ================= GET DRIVER =================
+// =====================================================
+// GET / UPDATE / DELETE
+// =====================================================
 
 const getDriver = async (id) => {
-  return await Driver.findById(id);
+  return Driver.findById(id);
 };
 
-// ================= UPDATE DRIVER =================
-
-const updateDriver = async (id, data) => {
-
-  return await Driver.findByIdAndUpdate(
+const updateDriver = async (
+  id,
+  data
+) => {
+  return Driver.findByIdAndUpdate(
     id,
     data,
-    { new: true }
+    {
+      new: true,
+      runValidators: true
+    }
   );
-
 };
-
-// ================= DELETE DRIVER =================
 
 const deleteDriver = async (id) => {
-
-  return await Driver.findByIdAndDelete(id);
-
+  return Driver.findByIdAndDelete(id);
 };
-
-
-
-
 
 module.exports = {
   registerDriver,
+  findDriver,
   getAllDrivers,
   addDriver,
   getDashboard,
