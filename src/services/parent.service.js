@@ -1,27 +1,126 @@
-
 const mongoose = require('mongoose');
+
 const Parent = require('../models/parent.model');
 const Driver = require('../models/driver.model');
 const Ride = require('../models/ride.model');
 const Attendance = require('../models/attendance.model');
+const StudentJourney = require('../models/studentjourney.model');
 
-// const Parent = require('../models/parent.model');
+/**
+ * =========================================================
+ * DATE HELPERS
+ * =========================================================
+ */
+
+const getStartOfToday = () => {
+  const now = new Date();
+
+  return new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate()
+  );
+};
+
+const getEndOfToday = () => {
+  const start = getStartOfToday();
+  const end = new Date(start);
+
+  end.setDate(end.getDate() + 1);
+
+  return end;
+};
+
+const getTomorrowRange = () => {
+  const start = getStartOfToday();
+
+  const tomorrowStart = new Date(start);
+  tomorrowStart.setDate(tomorrowStart.getDate() + 1);
+
+  const tomorrowEnd = new Date(tomorrowStart);
+  tomorrowEnd.setDate(tomorrowEnd.getDate() + 1);
+
+  return {
+    start: tomorrowStart,
+    end: tomorrowEnd
+  };
+};
+
+const getTodayRange = () => ({
+  start: getStartOfToday(),
+  end: getEndOfToday()
+});
+
+const getJourneyDate = (date = new Date()) => {
+  const year = date.getFullYear();
+  const month = String(
+    date.getMonth() + 1
+  ).padStart(2, '0');
+
+  const day = String(
+    date.getDate()
+  ).padStart(2, '0');
+
+  return `${year}-${month}-${day}`;
+};
 
 
-// =====================================================
-// ADD PARENT
-// =====================================================
+/**
+ * =========================================================
+ * JOURNEY
+ * =========================================================
+ */
+
+const getOrCreateStudentJourney = async (
+  parent,
+  date
+) => {
+
+  return StudentJourney.findOneAndUpdate(
+    {
+      parentId: parent.parentId,
+      date: getJourneyDate(date)
+    },
+    {
+      $setOnInsert: {
+        parentId: parent.parentId,
+        driverId: parent.driverId,
+        studentName: parent.studentName,
+        date: getJourneyDate(date)
+      }
+    },
+    {
+      new: true,
+      upsert: true,
+      setDefaultsOnInsert: true
+    }
+  );
+};
+
+
+/**
+ * =========================================================
+ * DRIVER RESOLUTION
+ * =========================================================
+ */
 
 const createDriverId = async () => {
-  // Keep generating until the application-level driverId is unique.
-  // The MongoDB unique index remains the final protection against races.
-  for (let attempt = 0; attempt < 10; attempt += 1) {
-    const candidate =
-      `DRV${Date.now()}${Math.floor(100 + Math.random() * 900)}`;
 
-    const exists = await Driver.exists({
-      driverId: candidate
-    });
+  for (
+    let attempt = 0;
+    attempt < 10;
+    attempt += 1
+  ) {
+
+    const candidate =
+      `DRV${Date.now()}${Math.floor(
+        100 + Math.random() * 900
+      )}`;
+
+    const exists =
+      await Driver.exists({
+        driverId: candidate
+      });
 
     if (!exists) {
       return candidate;
@@ -33,7 +132,9 @@ const createDriverId = async () => {
   );
 };
 
+
 const resolveOrCreateDriver = async (data) => {
+
   const suppliedDriverId =
     String(data?.driverId || '').trim();
 
@@ -45,7 +146,9 @@ const resolveOrCreateDriver = async (data) => {
     ).replace(/\D/g, '');
 
   const driverName =
-    String(data?.driverName || '').trim();
+    String(
+      data?.driverName || ''
+    ).trim();
 
   if (!driverMobile) {
     throw new Error(
@@ -59,41 +162,32 @@ const resolveOrCreateDriver = async (data) => {
     );
   }
 
-  // ---------------------------------------------------
-  // 1. Existing driver by Driver ID
-  // ---------------------------------------------------
   if (suppliedDriverId) {
-    const byId = await Driver.findOne({
-      driverId: suppliedDriverId
-    });
+
+    const byId =
+      await Driver.findOne({
+        driverId: suppliedDriverId
+      });
 
     if (byId) {
       return byId;
     }
   }
 
-  // ---------------------------------------------------
-  // 2. Existing driver by mobile number
-  // ---------------------------------------------------
-  const byMobile = await Driver.findOne({
-    mobileNumber: driverMobile
-  });
+  const byMobile =
+    await Driver.findOne({
+      mobileNumber: driverMobile
+    });
 
   if (byMobile) {
     return byMobile;
   }
 
-  // ---------------------------------------------------
-  // 3. New driver
-  //
-  // Parent only knows the driver's mobile number and
-  // optionally their name. Vehicle and route are NOT
-  // required during parent onboarding.
-  // ---------------------------------------------------
   const generatedDriverId =
     await createDriverId();
 
-  const newDriver = await Driver.create({
+  return Driver.create({
+
     driverId: generatedDriverId,
 
     role: 'driver',
@@ -102,16 +196,21 @@ const resolveOrCreateDriver = async (data) => {
       driverName ||
       'Pending Driver',
 
-    mobileNumber: driverMobile,
+    mobileNumber:
+      driverMobile,
 
     password: null,
 
     vehicleNumber:
-      String(data?.driverVehicleNumber || '').trim() ||
+      String(
+        data?.driverVehicleNumber || ''
+      ).trim() ||
       'Pending',
 
     routeArea:
-      String(data?.driverRouteArea || '').trim() ||
+      String(
+        data?.driverRouteArea || ''
+      ).trim() ||
       'Pending',
 
     isVerified: false,
@@ -119,38 +218,35 @@ const resolveOrCreateDriver = async (data) => {
     registrationSource:
       'parent_onboarding'
   });
-
-  return newDriver;
 };
 
 
-// =====================================================
-// ADD PARENT
-// =====================================================
+/**
+ * =========================================================
+ * ADD PARENT
+ * =========================================================
+ */
 
 const addParent = async (data) => {
 
-  // ===================================================
-  // DRIVER
-  // ===================================================
-  //
-  // IMPORTANT:
-  // Parent registration may provide only the driver's
-  // mobile number. If the driver does not exist, create
-  // the driver here and use the generated driverId.
-  // This guarantees Parent.driverId is never null.
-  // ===================================================
-
   const existingDriverId =
-    String(data?.driverId || '').trim();
+    String(
+      data?.driverId || ''
+    ).trim();
 
   const driverMobile =
-    String(data?.driverMobile || '').replace(/\D/g, '');
+    String(
+      data?.driverMobile || ''
+    ).replace(/\D/g, '');
 
   const existingDriver =
     existingDriverId
-      ? await Driver.findOne({ driverId: existingDriverId })
-      : await Driver.findOne({ mobileNumber: driverMobile });
+      ? await Driver.findOne({
+          driverId: existingDriverId
+        })
+      : await Driver.findOne({
+          mobileNumber: driverMobile
+        });
 
   const driver =
     existingDriver ||
@@ -158,17 +254,14 @@ const addParent = async (data) => {
 
   const driverWasCreatedForParent =
     !existingDriver &&
-    driver?.registrationSource === 'parent_onboarding';
+    driver?.registrationSource ===
+      'parent_onboarding';
 
   if (!driver?.driverId) {
     throw new Error(
       'Unable to resolve or create driver'
     );
   }
-
-  // ===================================================
-  // PICKUP LOCATION
-  // ===================================================
 
   const pickupLatitude =
     Number(
@@ -184,15 +277,10 @@ const addParent = async (data) => {
     !Number.isFinite(pickupLatitude) ||
     !Number.isFinite(pickupLongitude)
   ) {
-
     throw new Error(
       'Valid pickup location coordinates are required'
     );
   }
-
-  // ===================================================
-  // SCHOOL LOCATION
-  // ===================================================
 
   const schoolLatitude =
     Number(
@@ -208,49 +296,32 @@ const addParent = async (data) => {
     !Number.isFinite(schoolLatitude) ||
     !Number.isFinite(schoolLongitude)
   ) {
-
     throw new Error(
       'Valid school location coordinates are required'
     );
   }
 
-  // ===================================================
-  // MOBILE DUPLICATE
-  // ===================================================
-
   const existingParent =
     await Parent.findOne({
-      mobileNumber:
-        data.mobileNumber
+      mobileNumber: data.mobileNumber
     });
 
   if (existingParent) {
-
     throw new Error(
       'Parent already registered'
     );
   }
 
-  // ===================================================
-  // CREATE ID
-  // ===================================================
-
   const parentId =
     `PAR${Date.now()}`;
 
-  // ===================================================
-  // CREATE PARENT
-  // ===================================================
-
   const parentData = {
+
     ...data,
 
-    // Never trust a null/empty frontend driverId.
-    // The resolved/generated server driverId is authoritative.
     driverId:
       driver.driverId,
 
-    // Keep these normalized values on Parent too.
     driverMobile:
       driver.mobileNumber,
 
@@ -268,47 +339,46 @@ const addParent = async (data) => {
     role: 'parent',
 
     pickupLocation: {
-      latitude:
-        pickupLatitude,
-
-      longitude:
-        pickupLongitude
+      latitude: pickupLatitude,
+      longitude: pickupLongitude
     },
 
     schoolLocation: {
-      latitude:
-        schoolLatitude,
-
-      longitude:
-        schoolLongitude
+      latitude: schoolLatitude,
+      longitude: schoolLongitude
     },
 
     attendance: false,
 
-    morningStatus:
-      'waiting',
+    morningStatus: 'waiting',
 
     eveningStatus:
       'waiting_school_finish'
   };
 
   try {
-    const parent =
-      await Parent.create(
-        parentData
-      );
 
-    return parent;
+    return await Parent.create(
+      parentData
+    );
+
   } catch (error) {
-    // If this request created a brand-new pending driver but the
-    // parent could not be created, roll the driver back so we do not
-    // leave an orphaned driver record behind.
-    if (driverWasCreatedForParent && driver?._id) {
+
+    if (
+      driverWasCreatedForParent &&
+      driver?._id
+    ) {
+
       try {
-        await Driver.deleteOne({ _id: driver._id });
+
+        await Driver.deleteOne({
+          _id: driver._id
+        });
+
       } catch (cleanupError) {
+
         console.error(
-          'Failed to rollback pending driver after parent registration error:',
+          'Failed to rollback pending driver:',
           cleanupError
         );
       }
@@ -318,36 +388,40 @@ const addParent = async (data) => {
   }
 };
 
-module.exports = {
-  addParent
-};
 
 /**
+ * =========================================================
  * CRUD
+ * =========================================================
  */
 
 const getAllParents = async () => {
-  return Parent.find().sort({ createdAt: -1 });
+
+  return Parent.find()
+    .sort({
+      createdAt: -1
+    });
 };
+
 
 const getParent = async (id) => {
 
   let parent = null;
 
-  // Try MongoDB _id only when it is a valid ObjectId
-  if (mongoose.Types.ObjectId.isValid(id)) {
+  if (
+    mongoose.Types.ObjectId.isValid(id)
+  ) {
 
-    parent = await Parent.findById(id);
-
+    parent =
+      await Parent.findById(id);
   }
 
-  // If not found, try application parentId
   if (!parent) {
 
-    parent = await Parent.findOne({
-      parentId: id
-    });
-
+    parent =
+      await Parent.findOne({
+        parentId: id
+      });
   }
 
   if (!parent) {
@@ -355,200 +429,388 @@ const getParent = async (id) => {
     throw new Error(
       `Parent not found: ${id}`
     );
-
   }
 
   return parent;
 };
 
-const updateParent = async (id, data) => {
+
+const updateParent = async (
+  id,
+  data
+) => {
+
   return Parent.findByIdAndUpdate(
     id,
     data,
-    { new: true }
+    {
+      new: true,
+      runValidators: true
+    }
   );
 };
 
-const deleteParent = async (id) => {
+
+const deleteParent = async (
+  id
+) => {
+
   return Parent.findByIdAndDelete(id);
 };
 
+
 /**
- * Parent Dashboard
+ * =========================================================
+ * ACTIVE RIDE
+ * =========================================================
  */
-const getStartOfToday = () => {
 
-  const now = new Date();
+const getActiveRideForDriver = async (
+  driverId
+) => {
 
-  return new Date(
-    now.getFullYear(),
-    now.getMonth(),
-    now.getDate()
-  );
+  if (!driverId) {
+    return null;
+  }
 
+  const {
+    start,
+    end
+  } = getTodayRange();
+
+  return Ride.findOne({
+
+    driverId,
+
+    status: 'started',
+
+    createdAt: {
+      $gte: start,
+      $lt: end
+    }
+
+  }).sort({
+    createdAt: -1
+  });
 };
 
-const getEndOfToday = () => {
 
-  const start = getStartOfToday();
+/**
+ * =========================================================
+ * LATEST RIDE
+ *
+ * Used for completed/after-ride screen.
+ * =========================================================
+ */
 
-  const end = new Date(start);
+const getLatestRideForDriver = async (
+  driverId,
+  rideType = null
+) => {
 
-  end.setDate(
-    end.getDate() + 1
-  );
+  if (!driverId) {
+    return null;
+  }
 
-  return end;
+  const {
+    start,
+    end
+  } = getTodayRange();
 
+  const query = {
+
+    driverId,
+
+    createdAt: {
+      $gte: start,
+      $lt: end
+    }
+  };
+
+  if (rideType) {
+    query.rideType = rideType;
+  }
+
+  return Ride.findOne(query)
+    .sort({
+      createdAt: -1
+    });
 };
+
+
+/**
+ * =========================================================
+ * DURATION
+ * =========================================================
+ */
+
+const calculateDurationMinutes = (
+  start,
+  end
+) => {
+
+  if (!start || !end) {
+    return null;
+  }
+
+  const startDate =
+    new Date(start);
+
+  const endDate =
+    new Date(end);
+
+  if (
+    Number.isNaN(
+      startDate.getTime()
+    ) ||
+    Number.isNaN(
+      endDate.getTime()
+    )
+  ) {
+    return null;
+  }
+
+  const difference =
+    endDate.getTime() -
+    startDate.getTime();
+
+  if (difference < 0) {
+    return null;
+  }
+
+  return Math.round(
+    difference / 60000
+  );
+};
+
+
+/**
+ * =========================================================
+ * PARENT DASHBOARD
+ * =========================================================
+ */
 
 const getDashboard = async (parentId) => {
-
-  const parent =
-    await Parent.findOne({
-      parentId
-    });
+  const parent = await Parent.findOne({ parentId });
 
   if (!parent) {
     throw new Error('Parent not found');
   }
 
-  const driver =
-    await Driver.findOne({
-      driverId: parent.driverId
-    });
+  const driver = await Driver.findOne({
+    driverId: parent.driverId
+  });
 
-  // =====================================================
-  // TODAY'S ATTENDANCE
-  // =====================================================
+  const {
+    start: todayStart,
+    end: todayEnd
+  } = getTodayRange();
 
-  const todayStart =
-    getStartOfToday();
-
-  const todayEnd =
-    getEndOfToday();
-
-  const todayAttendance =
-    await Attendance.findOne({
-
-      parentId: parent.parentId,
-
-      date: {
-        $gte: todayStart,
-        $lt: todayEnd
-      }
-
-    }).sort({
-      date: -1
-    });
+  // ---------------------------------------------------------
+  // TODAY ATTENDANCE
+  // ---------------------------------------------------------
+  const todayAttendance = await Attendance.findOne({
+    parentId: parent.parentId,
+    date: {
+      $gte: todayStart,
+      $lt: todayEnd
+    }
+  }).sort({
+    date: -1
+  });
 
   const todayAttendanceStatus =
-    todayAttendance?.status ||
-    'not_marked';
+    todayAttendance?.status || 'not_marked';
 
   const isPresent =
     todayAttendanceStatus === 'present';
 
-  // =====================================================
-  // ACTIVE RIDES
-  // =====================================================
+  // ---------------------------------------------------------
+  // TOMORROW ATTENDANCE
+  // ---------------------------------------------------------
+  const {
+    start: tomorrowStart,
+    end: tomorrowEnd
+  } = getTomorrowRange();
 
-  const morningRide =
-    await Ride.findOne({
+  const tomorrowAttendance = await Attendance.findOne({
+    parentId: parent.parentId,
+    date: {
+      $gte: tomorrowStart,
+      $lt: tomorrowEnd
+    }
+  }).sort({
+    date: -1
+  });
 
-      driverId: parent.driverId,
+  const tomorrowAttendanceStatus =
+    tomorrowAttendance?.status || 'not_marked';
 
-      rideType: 'morning',
-
-      status: 'started'
-
-    }).sort({
-      createdAt: -1
-    });
-
-  const eveningRide =
-    await Ride.findOne({
-
-      driverId: parent.driverId,
-
-      rideType: 'evening',
-
-      status: 'started'
-
-    }).sort({
-      createdAt: -1
-    });
-
-  let activeRide = null;
-
-  if (morningRide) {
-
-    activeRide = morningRide;
-
-  } else if (eveningRide) {
-
-    activeRide = eveningRide;
-
-  }
+  // ---------------------------------------------------------
+  // ACTIVE RIDE - SOURCE OF TRUTH
+  // ---------------------------------------------------------
+  const activeRide =
+    await getActiveRideForDriver(parent.driverId);
 
   const rideStarted =
-    !!activeRide;
+    Boolean(activeRide);
 
+  const rideStatus =
+    activeRide?.status || null;
+
+  const rideId =
+    activeRide?.rideId || null;
+
+  const rideStartTime =
+    activeRide?.startTime || null;
+
+  const rideEndTime =
+    activeRide?.endTime || null;
+
+  /*
+   * IMPORTANT:
+   *
+   * rideType is ONLY the active ride type.
+   *
+   * If the driver has not started the evening ride,
+   * rideType MUST be null.
+   */
   const rideType =
     activeRide?.rideType || null;
 
-  // =====================================================
-  // STUDENT STATUS
-  // =====================================================
+  // ---------------------------------------------------------
+  // TODAY'S LATEST MORNING / EVENING RIDES
+  // ---------------------------------------------------------
+  const morningRide =
+    await getLatestRideForDriver(
+      parent.driverId,
+      'morning'
+    );
 
+  const eveningRide =
+    await getLatestRideForDriver(
+      parent.driverId,
+      'evening'
+    );
+
+  // ---------------------------------------------------------
+  // EXPLICIT COMPLETION CONTEXT
+  // ---------------------------------------------------------
+  //
+  // A student status such as dropped_at_home is not enough.
+  // We also require a TODAY ended Ride of the matching type.
+  //
+  const morningRideCompleted =
+    Boolean(
+      morningRide &&
+      morningRide.status === 'ended' &&
+      parent.morningStatus === 'dropped_at_school'
+    );
+
+  const eveningRideCompleted =
+    Boolean(
+      eveningRide &&
+      eveningRide.status === 'ended' &&
+      parent.eveningStatus === 'dropped_at_home'
+    );
+
+  let completedRideType = null;
+
+  if (eveningRideCompleted) {
+    completedRideType = 'evening';
+  } else if (morningRideCompleted) {
+    completedRideType = 'morning';
+  }
+
+  /*
+   * The next ride is useful when the current active ride is null.
+   *
+   * After the morning journey has completed, the next journey
+   * is the return journey.
+   */
+  let nextRideType = null;
+
+  if (
+    !rideStarted &&
+    !eveningRideCompleted &&
+    parent.morningStatus === 'dropped_at_school' &&
+    parent.eveningStatus !== 'dropped_at_home'
+  ) {
+    nextRideType = 'evening';
+  } else if (
+    !rideStarted &&
+    !morningRideCompleted &&
+    parent.morningStatus !== 'dropped_at_school'
+  ) {
+    nextRideType = 'morning';
+  }
+
+  // ---------------------------------------------------------
+  // STUDENT STATUS
+  // ---------------------------------------------------------
+  //
+  // ACTIVE RIDE:
+  //   use the status belonging to that active ride.
+  //
+  // NO ACTIVE RIDE:
+  //   return a completed status ONLY when today's matching
+  //   ride has actually ended.
+  //
+  //   otherwise return the next/current pending state.
+  //
   let studentStatus = 'waiting';
 
-  if (rideType === 'morning') {
-
+  if (rideStarted && rideType === 'morning') {
     studentStatus =
       parent.morningStatus || 'waiting';
-
-  }
-
-  else if (rideType === 'evening') {
-
+  } else if (rideStarted && rideType === 'evening') {
     studentStatus =
-      parent.eveningStatus ||
-      'waiting_school_finish';
-
+      parent.eveningStatus || 'waiting_school_finish';
+  } else if (eveningRideCompleted) {
+    studentStatus = 'dropped_at_home';
+  } else if (morningRideCompleted) {
+    studentStatus = 'dropped_at_school';
+  } else if (
+    nextRideType === 'evening'
+  ) {
+    /*
+     * This is the exact state shown in the driver screenshot:
+     *
+     * Return Journey -> READY
+     * Start Return has not been pressed.
+     */
+    studentStatus = 'waiting_school_finish';
+  } else {
+    studentStatus = 'waiting';
   }
 
-  // =====================================================
-  // TRACKING ACCESS
-  //
-  // ONLY WHILE STUDENT IS INSIDE VAN
-  // =====================================================
-
+  // ---------------------------------------------------------
+  // TRACKING
+  // ---------------------------------------------------------
   let trackingAvailable = false;
 
   if (
-    rideType === 'morning' &&
-    studentStatus === 'picked_up'
+    rideStarted &&
+    parent.attendance === true
   ) {
+    if (
+      rideType === 'morning' &&
+      parent.morningStatus === 'picked_up'
+    ) {
+      trackingAvailable = true;
+    }
 
-    trackingAvailable = true;
-
+    if (
+      rideType === 'evening' &&
+      parent.eveningStatus === 'picked_from_school'
+    ) {
+      trackingAvailable = true;
+    }
   }
 
-  if (
-    rideType === 'evening' &&
-    studentStatus ===
-      'picked_from_school'
-  ) {
-
-    trackingAvailable = true;
-
-  }
-
-  // =====================================================
-  // RIDE MESSAGE
-  // =====================================================
-
+  // ---------------------------------------------------------
+  // CURRENT RIDE MESSAGE
+  // ---------------------------------------------------------
   let rideDirection = null;
 
   let rideMessageTitle =
@@ -557,34 +819,99 @@ const getDashboard = async (parentId) => {
   let rideMessage =
     'The school van is not currently on a trip.';
 
-  if (rideType === 'morning') {
-
+  if (
+    rideStarted &&
+    rideType === 'morning'
+  ) {
     rideDirection =
-      'to_school';
+      'Home → School';
 
     rideMessageTitle =
-      'School Trip Started';
+      'Morning Ride Started';
 
     rideMessage =
-      'The van is taking students to school.';
-
-  }
-
-  else if (rideType === 'evening') {
-
+      'The van is heading to pick up your student.';
+  } else if (
+    rideStarted &&
+    rideType === 'evening'
+  ) {
     rideDirection =
-      'to_home';
+      'School → Home';
 
     rideMessageTitle =
       'Return Trip Started';
 
     rideMessage =
-      'The van is bringing students home.';
+      'The van is heading to school to pick up your student.';
+  } else if (
+    nextRideType === 'evening'
+  ) {
+    rideDirection =
+      'School → Home';
 
+    rideMessageTitle =
+      'Return Ride Pending';
+
+    rideMessage =
+      'The driver has not started the return ride from school yet.';
+  } else if (
+    nextRideType === 'morning'
+  ) {
+    rideDirection =
+      'Home → School';
+
+    rideMessageTitle =
+      'Morning Ride Pending';
+
+    rideMessage =
+      'The driver has not started the morning ride yet.';
+  } else if (
+    completedRideType === 'evening'
+  ) {
+    rideDirection =
+      'School → Home';
+
+    rideMessageTitle =
+      'Arrived Home';
+
+    rideMessage =
+      parent.eveningDroppedAtHomeAt
+        ? `Your student reached home at ${parent.eveningDroppedAtHomeAt}.`
+        : 'Your student has reached home safely.';
+  } else if (
+    completedRideType === 'morning'
+  ) {
+    rideDirection =
+      'Home → School';
+
+    rideMessageTitle =
+      'Arrived at School';
+
+    rideMessage =
+      parent.morningDroppedAtSchoolAt
+        ? `Your student reached school at ${parent.morningDroppedAtSchoolAt}.`
+        : 'Your student has reached school safely.';
   }
 
-  return {
+  // ---------------------------------------------------------
+  // JOURNEY DURATIONS
+  // ---------------------------------------------------------
+  const morningJourneyDuration =
+    calculateDurationMinutes(
+      parent.morningPickedUpAt,
+      parent.morningDroppedAtSchoolAt
+    );
 
+  const eveningJourneyDuration =
+    calculateDurationMinutes(
+      parent.eveningPickedFromSchoolAt,
+      parent.eveningDroppedAtHomeAt
+    );
+
+  // ---------------------------------------------------------
+  // RETURN
+  // ---------------------------------------------------------
+  return {
     studentName:
       parent.studentName,
 
@@ -597,10 +924,7 @@ const getDashboard = async (parentId) => {
     dropArea:
       parent.dropArea,
 
-    // =================================================
-    // ATTENDANCE
-    // =================================================
-
+    // TODAY ATTENDANCE
     attendance:
       isPresent,
 
@@ -609,23 +933,35 @@ const getDashboard = async (parentId) => {
     todayAttendanceDate:
       todayAttendance?.date || null,
 
-    // =================================================
-    // STUDENT RIDE STATUS
-    // =================================================
+    // TOMORROW ATTENDANCE
+    tomorrowAttendanceStatus,
 
+    tomorrowAttendanceDate:
+      tomorrowAttendance?.date || null,
+
+    // RAW STUDENT STATUS FIELDS
     morningStatus:
       parent.morningStatus,
 
     eveningStatus:
       parent.eveningStatus,
 
+    /*
+     * IMPORTANT:
+     * studentStatus above is now ride-aware.
+     */
     studentStatus,
 
-    // =================================================
-    // RIDE
-    // =================================================
-
+    // AUTHORITATIVE CURRENT RIDE
     rideStarted,
+
+    rideStatus,
+
+    rideId,
+
+    rideStartTime,
+
+    rideEndTime,
 
     rideType,
 
@@ -635,19 +971,53 @@ const getDashboard = async (parentId) => {
 
     rideMessage,
 
-    // =================================================
-    // TRACKING
-    // =================================================
-
     trackingAvailable,
 
-    // =================================================
-    // DRIVER
-    // =================================================
+    // COMPLETION / NEXT-RIDE CONTEXT
+    completedRideType,
+
+    lastCompletedRideType:
+      completedRideType,
+
+    lastCompletedRideId:
+      completedRideType === 'evening'
+        ? eveningRide?.rideId || null
+        : completedRideType === 'morning'
+          ? morningRide?.rideId || null
+          : null,
+
+    lastCompletedRideEndTime:
+      completedRideType === 'evening'
+        ? eveningRide?.endTime || null
+        : completedRideType === 'morning'
+          ? morningRide?.endTime || null
+          : null,
+
+    nextRideType,
+
+    // JOURNEY
+    journeyTimes: {
+      morningPickedUpAt:
+        parent.morningPickedUpAt || null,
+
+      morningDroppedAtSchoolAt:
+        parent.morningDroppedAtSchoolAt || null,
+
+      eveningPickedFromSchoolAt:
+        parent.eveningPickedFromSchoolAt || null,
+
+      eveningDroppedAtHomeAt:
+        parent.eveningDroppedAtHomeAt || null,
+
+      morningJourneyDurationMinutes:
+        morningJourneyDuration,
+
+      eveningJourneyDurationMinutes:
+        eveningJourneyDuration
+    },
 
     driver: driver
       ? {
-
           driverId:
             driver.driverId,
 
@@ -656,24 +1026,21 @@ const getDashboard = async (parentId) => {
 
           mobileNumber:
             driver.mobileNumber
-
         }
       : null
-
   };
-
 };
 
+
 /**
- * Attendance
+ * =========================================================
+ * TODAY ATTENDANCE
+ * =========================================================
  */
 
 const updateAttendance = async (
-
   parentId,
-
   attendance
-
 ) => {
 
   const parent =
@@ -684,141 +1051,140 @@ const updateAttendance = async (
       },
 
       {
-        attendance
+        $set: {
+          attendance
+        }
       },
 
       {
-        new: true
+        new: true,
+        runValidators: true
       }
-
     );
 
   if (!parent) {
-    throw new Error('Parent not found');
+    throw new Error(
+      'Parent not found'
+    );
   }
 
   return parent;
-
 };
 
+
 /**
- * Morning Pickup
+ * =========================================================
+ * TOMORROW ATTENDANCE
+ * =========================================================
  */
 
-const pickStudentMorning = async (parentId) => {
+const updateTomorrowAttendance = async (
+  parentId,
+  status
+) => {
 
-  return Parent.findOneAndUpdate(
+  if (
+    !['present', 'absent']
+      .includes(status)
+  ) {
 
-    {
+    throw new Error(
+      'Tomorrow attendance must be present or absent'
+    );
+  }
+
+
+  let parent = null;
+
+
+  if (
+    mongoose.Types.ObjectId.isValid(
       parentId
-    },
+    )
+  ) {
 
-    {
-      morningStatus: 'picked_up'
-    },
+    parent =
+      await Parent.findById(
+        parentId
+      );
+  }
 
-    {
-      new: true
-    }
 
-  );
+  if (!parent) {
 
+    parent =
+      await Parent.findOne({
+        parentId
+      });
+  }
+
+
+  if (!parent) {
+
+    throw new Error(
+      'Parent not found'
+    );
+  }
+
+
+  const {
+    start,
+    end
+  } = getTomorrowRange();
+
+
+  const tomorrowDate =
+    new Date(start);
+
+
+  const record =
+    await Attendance.findOneAndUpdate(
+
+      {
+        parentId:
+          parent.parentId,
+
+        date: {
+          $gte: start,
+          $lt: end
+        }
+      },
+
+      {
+        $set: {
+          parentId:
+            parent.parentId,
+
+          date:
+            tomorrowDate,
+
+          status
+        }
+      },
+
+      {
+        new: true,
+        upsert: true,
+        setDefaultsOnInsert: true
+      }
+    );
+
+
+  return {
+    parent,
+    record,
+    status,
+    date: tomorrowDate
+  };
 };
 
-/**
- * Morning Drop
- */
-
-const dropStudentSchool = async (parentId) => {
-
-  return Parent.findOneAndUpdate(
-
-    {
-      parentId
-    },
-
-    {
-      morningStatus: 'dropped_at_school'
-    },
-
-    {
-      new: true
-    }
-
-  );
-
-};
 
 /**
- * Evening Pickup
+ * =========================================================
+ * STUDENT STATUS
+ * =========================================================
  */
 
-const pickStudentFromSchool = async (parentId) => {
-
-  return Parent.findOneAndUpdate(
-
-    {
-      parentId
-    },
-
-    {
-      eveningStatus: 'picked_from_school'
-    },
-
-    {
-      new: true
-    }
-
-  );
-
-};
-
-/**
- * Evening Drop
- */
-
-const dropStudentHome = async (parentId) => {
-
-  return Parent.findOneAndUpdate(
-
-    {
-      parentId
-    },
-
-    {
-      eveningStatus: 'dropped_at_home'
-    },
-
-    {
-      new: true
-    }
-
-  );
-
-};
-/**
- * =====================================================
- * Generic Student Status Update
- * =====================================================
- *
- * Frontend contract:
- *
- * MORNING
- * picked_up
- * dropped_at_school
- *
- * EVENING
- * picked_up
- * dropped_at_home
- *
- * Backend mapping:
- *
- * evening + picked_up
- *      ->
- * eveningStatus = picked_from_school
- *
- * =====================================================
- */
 const updateStudentStatus = async (
   parentId,
   rideType,
@@ -835,6 +1201,7 @@ const updateStudentStatus = async (
     !['morning', 'evening']
       .includes(rideType)
   ) {
+
     throw new Error(
       'Invalid rideType'
     );
@@ -846,10 +1213,12 @@ const updateStudentStatus = async (
     );
   }
 
+
   const parent =
     await Parent.findOne({
       parentId
     });
+
 
   if (!parent) {
     throw new Error(
@@ -857,44 +1226,78 @@ const updateStudentStatus = async (
     );
   }
 
-  if (
-    parent.attendance !== true
-  ) {
+
+  if (parent.attendance !== true) {
+
     throw new Error(
       'Absent students cannot be picked up'
     );
   }
+
+
+  const activeRide =
+    await getActiveRideForDriver(
+      parent.driverId
+    );
+
+
+  if (!activeRide) {
+
+    throw new Error(
+      'Ride must be started before updating student status'
+    );
+  }
+
+
+  if (
+    activeRide.rideType !== rideType
+  ) {
+
+    throw new Error(
+      `The active ride is ${activeRide.rideType}; ${rideType} student update is not allowed`
+    );
+  }
+
 
   const eventTime =
     new Date();
 
   const update = {};
 
-  // =====================================================
-  // MORNING
-  // =====================================================
 
-  if (rideType === 'morning') {
+  /**
+   * MORNING
+   */
 
-    if (status === 'picked_up') {
+  if (
+    rideType === 'morning'
+  ) {
+
+    if (
+      status === 'picked_up'
+    ) {
 
       if (
         parent.morningStatus ===
         'picked_up'
       ) {
+
         throw new Error(
           'Student is already picked up'
         );
       }
 
+
       if (
         parent.morningStatus ===
         'dropped_at_school'
       ) {
+
         throw new Error(
           'Student has already been dropped at school'
         );
       }
+
 
       update.morningStatus =
         'picked_up';
@@ -912,10 +1315,12 @@ const updateStudentStatus = async (
         parent.morningStatus !==
         'picked_up'
       ) {
+
         throw new Error(
           'Student must be picked up before school drop'
         );
       }
+
 
       update.morningStatus =
         'dropped_at_school';
@@ -930,45 +1335,52 @@ const updateStudentStatus = async (
       throw new Error(
         `Invalid morning status: ${status}`
       );
-
     }
-
   }
 
-  // =====================================================
-  // EVENING
-  // =====================================================
+
+  /**
+   * EVENING
+   */
 
   else {
 
-    if (status === 'picked_up') {
+    if (
+      status === 'picked_up'
+    ) {
 
       if (
         parent.eveningStatus ===
         'picked_from_school'
       ) {
+
         throw new Error(
           'Student is already picked from school'
         );
       }
 
+
       if (
         parent.eveningStatus ===
         'dropped_at_home'
       ) {
+
         throw new Error(
           'Student has already been dropped at home'
         );
       }
 
+
       if (
         parent.eveningStatus !==
         'waiting_school_finish'
       ) {
+
         throw new Error(
           `Student cannot be picked from school. Current status: ${parent.eveningStatus}`
         );
       }
+
 
       update.eveningStatus =
         'picked_from_school';
@@ -989,10 +1401,12 @@ const updateStudentStatus = async (
         parent.eveningStatus !==
         'picked_from_school'
       ) {
+
         throw new Error(
           'Student must be picked from school before home drop'
         );
       }
+
 
       update.eveningStatus =
         'dropped_at_home';
@@ -1007,46 +1421,42 @@ const updateStudentStatus = async (
       throw new Error(
         `Invalid evening status: ${status}`
       );
-
     }
-
   }
 
-  // =====================================================
-  // UPDATE CORRECT STATE
-  // =====================================================
 
   const updatedParent =
     await Parent.findOneAndUpdate(
+
       {
         parentId
       },
+
       {
         $set: update
       },
+
       {
         new: true,
         runValidators: true
       }
     );
 
+
   if (!updatedParent) {
 
     throw new Error(
       'Parent not found'
     );
-
   }
 
-  // =====================================================
-  // DAILY JOURNEY
-  // =====================================================
 
   const journey =
     await getOrCreateStudentJourney(
       updatedParent,
       eventTime
     );
+
 
   if (
     rideType === 'morning'
@@ -1059,52 +1469,110 @@ const updateStudentStatus = async (
       journey.morning.pickedUpAt =
         eventTime;
 
-    }
+    } else {
 
-    else {
-
-      journey.morning.droppedAtSchoolAt =
+      journey.morning
+        .droppedAtSchoolAt =
         eventTime;
-
     }
 
-  }
-
-  else {
+  } else {
 
     if (
       status === 'picked_up'
     ) {
 
-      journey.evening.pickedFromSchoolAt =
+      journey.evening
+        .pickedFromSchoolAt =
         eventTime;
 
-      journey.evening.droppedAtHomeAt =
+      journey.evening
+        .droppedAtHomeAt =
         null;
 
-    }
+    } else {
 
-    else {
-
-      journey.evening.droppedAtHomeAt =
+      journey.evening
+        .droppedAtHomeAt =
         eventTime;
-
     }
-
   }
 
+
   await journey.save();
+
 
   return {
 
     parent:
       updatedParent,
 
-    eventTime
+    eventTime,
 
+    rideId:
+      activeRide.rideId,
+
+    rideType:
+      activeRide.rideType
+  };
+};
+
+
+/**
+ * =========================================================
+ * BACKWARD COMPATIBILITY
+ * =========================================================
+ */
+
+const pickStudentMorning =
+  async (parentId) => {
+
+    return updateStudentStatus(
+      parentId,
+      'morning',
+      'picked_up'
+    );
   };
 
-};
+
+const dropStudentSchool =
+  async (parentId) => {
+
+    return updateStudentStatus(
+      parentId,
+      'morning',
+      'dropped_at_school'
+    );
+  };
+
+
+const pickStudentFromSchool =
+  async (parentId) => {
+
+    return updateStudentStatus(
+      parentId,
+      'evening',
+      'picked_up'
+    );
+  };
+
+
+const dropStudentHome =
+  async (parentId) => {
+
+    return updateStudentStatus(
+      parentId,
+      'evening',
+      'dropped_at_home'
+    );
+  };
+
+
+/**
+ * =========================================================
+ * MONTHLY ATTENDANCE
+ * =========================================================
+ */
 
 const saveMonthlyAttendance = async (
   parentId,
@@ -1113,125 +1581,144 @@ const saveMonthlyAttendance = async (
   records
 ) => {
 
-  // ==========================================
-  // FIND PARENT
-  // ==========================================
-
   let parent = null;
 
   if (
-    mongoose.Types.ObjectId.isValid(parentId)
-  ) {
-    parent = await Parent.findById(parentId);
-  }
-
-  if (!parent) {
-    parent = await Parent.findOne({
+    mongoose.Types.ObjectId.isValid(
       parentId
-    });
+    )
+  ) {
+
+    parent =
+      await Parent.findById(
+        parentId
+      );
   }
 
+
   if (!parent) {
+
+    parent =
+      await Parent.findOne({
+        parentId
+      });
+  }
+
+
+  if (!parent) {
+
     throw new Error(
       `Parent not found: ${parentId}`
     );
   }
 
-  // ==========================================
-  // MONTH RANGE
-  // ==========================================
 
-  const startDate = new Date(
-    Number(year),
-    Number(month) - 1,
-    1
-  );
+  const startDate =
+    new Date(
+      Number(year),
+      Number(month) - 1,
+      1
+    );
 
-  const endDate = new Date(
-    Number(year),
-    Number(month),
-    1
-  );
 
-  // ==========================================
-  // REMOVE EXISTING MONTH RECORDS
-  //
-  // This makes Reset Month work.
-  // ==========================================
+  const endDate =
+    new Date(
+      Number(year),
+      Number(month),
+      1
+    );
+
 
   await Attendance.deleteMany({
-    parentId: parent.parentId,
+
+    parentId:
+      parent.parentId,
+
     date: {
       $gte: startDate,
       $lt: endDate
     }
   });
 
-  // ==========================================
-  // SAVE NEW RECORDS
-  // ==========================================
 
-  if (records.length > 0) {
+  if (
+    Array.isArray(records) &&
+    records.length > 0
+  ) {
 
-    const documents = records.map(record => {
+    const documents =
+      records.map(record => {
 
-      const attendanceDate =
-        new Date(record.date);
+        const attendanceDate =
+          new Date(record.date);
 
-      if (
-        isNaN(
-          attendanceDate.getTime()
-        )
-      ) {
-        throw new Error(
-          `Invalid date: ${record.date}`
-        );
-      }
 
-      return {
-        parentId: parent.parentId,
-        date: attendanceDate,
-        status: record.status
-      };
+        if (
+          Number.isNaN(
+            attendanceDate.getTime()
+          )
+        ) {
 
-    });
+          throw new Error(
+            `Invalid date: ${record.date}`
+          );
+        }
+
+
+        return {
+
+          parentId:
+            parent.parentId,
+
+          date:
+            attendanceDate,
+
+          status:
+            record.status
+        };
+      });
+
 
     await Attendance.insertMany(
       documents
     );
-
   }
 
-  // ==========================================
-  // RETURN COMPLETE MONTH
-  // ==========================================
 
   const savedRecords =
     await Attendance.find({
-      parentId: parent.parentId,
+
+      parentId:
+        parent.parentId,
+
       date: {
         $gte: startDate,
         $lt: endDate
       }
+
     }).sort({
       date: 1
     });
+
 
   return {
 
     parent,
 
-    parentId: parent.parentId,
+    parentId:
+      parent.parentId,
 
-    year: Number(year),
+    year:
+      Number(year),
 
-    month: Number(month),
+    month:
+      Number(month),
 
-    records: savedRecords
-
+    records:
+      savedRecords
   };
-
 };
+
 
 module.exports = {
 
@@ -1249,6 +1736,8 @@ module.exports = {
 
   updateAttendance,
 
+  updateTomorrowAttendance,
+
   pickStudentMorning,
 
   dropStudentSchool,
@@ -1258,6 +1747,6 @@ module.exports = {
   dropStudentHome,
 
   updateStudentStatus,
-  saveMonthlyAttendance
 
+  saveMonthlyAttendance
 };

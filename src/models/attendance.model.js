@@ -5,6 +5,7 @@ const attendanceSchema = new mongoose.Schema(
     parentId: {
       type: String,
       required: true,
+      trim: true,
       index: true
     },
 
@@ -24,6 +25,7 @@ const attendanceSchema = new mongoose.Schema(
   }
 );
 
+// One attendance record per parent per date.
 attendanceSchema.index(
   {
     parentId: 1,
@@ -34,5 +36,7 @@ attendanceSchema.index(
   }
 );
 
-module.exports =
-  mongoose.model('Attendance', attendanceSchema);
+module.exports = mongoose.model(
+  'Attendance',
+  attendanceSchema
+);
