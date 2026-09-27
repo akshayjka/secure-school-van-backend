@@ -809,307 +809,120 @@ const updateTomorrowAttendance =
         date
       } = req.body;
 
-
-      // -------------------------------------------------
-      // VALIDATION
-      // -------------------------------------------------
-
       if (!parentId) {
-
         return res.status(400).json({
-
           success: false,
-
-          message:
-            'parentId is required'
-
+          message: 'parentId is required'
         });
       }
 
-
-      if (
-        !['present', 'absent']
-          .includes(status)
-      ) {
-
+      if (!['present', 'absent'].includes(status)) {
         return res.status(400).json({
-
           success: false,
-
-          message:
-            'status must be present or absent'
-
+          message: 'status must be present or absent'
         });
       }
 
-
-      // -------------------------------------------------
-      // FIND PARENT
-      // -------------------------------------------------
-
-      const parent =
-        await findParentByIdentifier(
-          parentId
+      /*
+       * Persistence is handled in parent.service.js.
+       * Pass the explicit browser calendar date so the API cannot
+       * save a different day because of timezone differences.
+       */
+      const result =
+        await parentService.updateTomorrowAttendance(
+          parentId,
+          status,
+          date || null
         );
 
+      const persistedDate = result.date;
+      const persistedStatus = result.status;
+      const parent = result.parent;
 
-      if (!parent) {
-
-        return res.status(404).json({
-
-          success: false,
-
-          message:
-            'Parent not found'
-
-        });
-      }
-
-
-      // -------------------------------------------------
-      // DETERMINE TOMORROW
-      // -------------------------------------------------
-
-      let attendanceDate;
-
-
-      if (date) {
-
-        attendanceDate =
-          normalizeAttendanceDate(
-            date
-          );
-
-      } else {
-
-        const tomorrow =
-          new Date();
-
-        tomorrow.setDate(
-          tomorrow.getDate() + 1
-        );
-
-        attendanceDate =
-          normalizeAttendanceDate(
-            tomorrow
-          );
-      }
-
-
-      if (!attendanceDate) {
-
-        return res.status(400).json({
-
-          success: false,
-
-          message:
-            'Invalid attendance date'
-
-        });
-      }
-
-
-      // -------------------------------------------------
-      // SAVE / UPDATE
-      // -------------------------------------------------
-
-      const attendance =
-        await Attendance.findOneAndUpdate(
-
-          {
-            parentId:
-              parent.parentId,
-
-            date:
-              attendanceDate
-          },
-
-          {
-            parentId:
-              parent.parentId,
-
-            date:
-              attendanceDate,
-
-            status
-          },
-
-          {
-            new: true,
-
-            upsert: true,
-
-            setDefaultsOnInsert: true,
-
-            runValidators: true
-          }
-        );
-
-
-      // -------------------------------------------------
-      // SOCKET
-      // -------------------------------------------------
-
-      const io =
-        req.app.get('io');
-
+      const io = req.app.get('io');
 
       const payload = {
-
-        parentId:
-          parent.parentId,
-
-        driverId:
-          parent.driverId,
-
-        studentName:
-          parent.studentName,
-
-        status,
-
-        attendanceStatus:
-          status,
-
-        date:
-          attendanceDate,
-
-        dateString:
-          formatAttendanceDate(
-            attendanceDate
-          ),
-
-        timestamp:
-          Date.now()
+        parentId: parent.parentId,
+        driverId: parent.driverId,
+        studentName: parent.studentName,
+        status: persistedStatus,
+        attendanceStatus: persistedStatus,
+        date: persistedDate,
+        dateString: formatAttendanceDate(persistedDate),
+        timestamp: Date.now()
       };
 
-
       if (io) {
-
-        // Parent room
-        io.to(
-          parent.parentId
-        ).emit(
+        io.to(parent.parentId).emit(
           'tomorrowAttendanceUpdated',
           payload
         );
 
-
-        // Attendance-specific parent room
-        io.to(
-          `parent_attendance_${parent.parentId}`
-        ).emit(
+        io.to(`parent_attendance_${parent.parentId}`).emit(
           'attendanceUpdated',
           {
             ...payload,
-
-            year:
-              attendanceDate.getFullYear(),
-
-            month:
-              attendanceDate.getMonth() + 1
+            year: persistedDate.getFullYear(),
+            month: persistedDate.getMonth() + 1
           }
         );
 
-
-        // Driver room
         emitDriverChannel(
           io,
-
           parent.driverId,
-
           'tomorrowAttendanceUpdated',
-
           payload
         );
 
-
-        // Dashboard refresh
-        io.to(
-          parent.parentId
-        ).emit(
+        io.to(parent.parentId).emit(
           'dashboardUpdated',
           {
-            type:
-              'tomorrow_attendance_updated',
-
-            parentId:
-              parent.parentId,
-
-            tomorrowAttendanceStatus:
-              status,
-
-            timestamp:
-              Date.now()
+            type: 'tomorrow_attendance_updated',
+            parentId: parent.parentId,
+            tomorrowAttendanceStatus: persistedStatus,
+            tomorrowAttendanceDate: formatAttendanceDate(persistedDate),
+            timestamp: Date.now()
           }
         );
       }
 
-
-      // -------------------------------------------------
-      // RESPONSE
-      // -------------------------------------------------
-
       return res.status(200).json({
-
         success: true,
-
-        message:
-          'Tomorrow attendance updated successfully',
-
+        message: 'Tomorrow attendance updated successfully',
         data: {
-
-          parentId:
-            parent.parentId,
-
-          status,
-
-          date:
-            attendanceDate,
-
-          dateString:
-            formatAttendanceDate(
-              attendanceDate
-            )
+          parentId: parent.parentId,
+          status: persistedStatus,
+          date: persistedDate,
+          dateString: formatAttendanceDate(persistedDate)
         }
-
       });
 
-    }
-
-    catch (error) {
+    } catch (error) {
 
       console.error(
         'UPDATE TOMORROW ATTENDANCE ERROR:',
         error
       );
 
+      const message =
+        error?.message ||
+        'Failed to update tomorrow attendance';
 
-      // Duplicate key protection
       if (
-        error?.code === 11000
+        message.includes('attendance date') ||
+        message.includes('Attendance date') ||
+        message.includes('must be tomorrow')
       ) {
-
-        return res.status(409).json({
-
+        return res.status(400).json({
           success: false,
-
-          message:
-            'Attendance record already exists'
-
+          message
         });
       }
 
-
       return res.status(500).json({
-
         success: false,
-
-        message:
-          error.message ||
-          'Failed to update tomorrow attendance'
-
+        message
       });
-
     }
 
   };
@@ -2112,7 +1925,7 @@ const getMonthlyAttendance =
       // FETCH
       // -------------------------------------------------
 
-      const records =
+      const rawRecords =
         await Attendance.find({
 
           parentId:
@@ -2130,9 +1943,45 @@ const getMonthlyAttendance =
 
         })
         .sort({
-          date: 1
+          updatedAt: -1,
+          createdAt: -1,
+          _id: -1
         })
         .lean();
+
+      /*
+       * Return only the latest record for each calendar date.
+       * This repairs the duplicate/time-component records created
+       * by older attendance implementations.
+       */
+      const recordsByCalendarDate = new Map();
+
+      for (const record of rawRecords) {
+        const normalizedDate =
+          normalizeAttendanceDate(record.date);
+
+        if (!normalizedDate) {
+          continue;
+        }
+
+        const calendarDate =
+          formatAttendanceDate(normalizedDate);
+
+        if (!recordsByCalendarDate.has(calendarDate)) {
+          recordsByCalendarDate.set(
+            calendarDate,
+            record
+          );
+        }
+      }
+
+      const records =
+        Array.from(recordsByCalendarDate.values())
+          .sort((a, b) => {
+            const aDate = normalizeAttendanceDate(a.date);
+            const bDate = normalizeAttendanceDate(b.date);
+            return aDate.getTime() - bDate.getTime();
+          });
 
 
       // -------------------------------------------------

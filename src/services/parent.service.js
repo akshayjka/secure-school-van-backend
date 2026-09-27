@@ -51,6 +51,80 @@ const getTodayRange = () => ({
   end: getEndOfToday()
 });
 
+const normalizeAttendanceDate = (value) => {
+  if (!value) return null;
+
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) return null;
+    return new Date(
+      value.getFullYear(),
+      value.getMonth(),
+      value.getDate(),
+      0, 0, 0, 0
+    );
+  }
+
+  if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    const [year, month, day] = value.split('-').map(Number);
+    const date = new Date(year, month - 1, day, 0, 0, 0, 0);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return null;
+
+  return new Date(
+    parsed.getFullYear(),
+    parsed.getMonth(),
+    parsed.getDate(),
+    0, 0, 0, 0
+  );
+};
+
+const formatAttendanceDate = (date) => {
+  if (!date) return '';
+
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+};
+
+const getAttendanceRevisionTime = (record) => {
+  for (const value of [record?.updatedAt, record?.createdAt]) {
+    if (!value) continue;
+    const date = new Date(value);
+    if (!Number.isNaN(date.getTime())) return date.getTime();
+  }
+
+  if (record?._id?.getTimestamp) {
+    try {
+      return record._id.getTimestamp().getTime();
+    } catch (_) {}
+  }
+
+  const date = new Date(record?.date);
+  return Number.isNaN(date.getTime()) ? 0 : date.getTime();
+};
+
+const pickLatestAttendanceRecord = (records = []) => {
+  if (!records.length) return null;
+
+  return records.reduce((latest, current) => {
+    if (!latest) return current;
+
+    const latestTime = getAttendanceRevisionTime(latest);
+    const currentTime = getAttendanceRevisionTime(current);
+
+    if (currentTime > latestTime) return current;
+
+    if (currentTime === latestTime) {
+      return String(current?._id || '') > String(latest?._id || '')
+        ? current
+        : latest;
+    }
+
+    return latest;
+  }, null);
+};
+
 const getJourneyDate = (date = new Date()) => {
   const year = date.getFullYear();
   const month = String(
@@ -609,15 +683,16 @@ const getDashboard = async (parentId) => {
   // ---------------------------------------------------------
   // TODAY ATTENDANCE
   // ---------------------------------------------------------
-  const todayAttendance = await Attendance.findOne({
+  const todayAttendanceRecords = await Attendance.find({
     parentId: parent.parentId,
     date: {
       $gte: todayStart,
       $lt: todayEnd
     }
-  }).sort({
-    date: -1
-  });
+  }).lean();
+
+  const todayAttendance =
+    pickLatestAttendanceRecord(todayAttendanceRecords);
 
   const todayAttendanceStatus =
     todayAttendance?.status || 'not_marked';
@@ -633,15 +708,16 @@ const getDashboard = async (parentId) => {
     end: tomorrowEnd
   } = getTomorrowRange();
 
-  const tomorrowAttendance = await Attendance.findOne({
+  const tomorrowAttendanceRecords = await Attendance.find({
     parentId: parent.parentId,
     date: {
       $gte: tomorrowStart,
       $lt: tomorrowEnd
     }
-  }).sort({
-    date: -1
-  });
+  }).lean();
+
+  const tomorrowAttendance =
+    pickLatestAttendanceRecord(tomorrowAttendanceRecords);
 
   const tomorrowAttendanceStatus =
     tomorrowAttendance?.status || 'not_marked';
@@ -1080,7 +1156,8 @@ const updateAttendance = async (
 
 const updateTomorrowAttendance = async (
   parentId,
-  status
+  status,
+  requestedDate = null
 ) => {
 
   if (
@@ -1128,53 +1205,83 @@ const updateTomorrowAttendance = async (
 
 
   const {
-    start,
-    end
+    start: tomorrowStart,
+    end: tomorrowEnd
   } = getTomorrowRange();
 
+  const requestedAttendanceDate =
+    requestedDate
+      ? normalizeAttendanceDate(requestedDate)
+      : new Date(tomorrowStart);
 
-  const tomorrowDate =
-    new Date(start);
+  if (!requestedAttendanceDate) {
+    throw new Error('Invalid tomorrow attendance date');
+  }
 
+  const tomorrowCalendarDate =
+    formatAttendanceDate(tomorrowStart);
 
-  const record =
-    await Attendance.findOneAndUpdate(
-
-      {
-        parentId:
-          parent.parentId,
-
-        date: {
-          $gte: start,
-          $lt: end
-        }
-      },
-
-      {
-        $set: {
-          parentId:
-            parent.parentId,
-
-          date:
-            tomorrowDate,
-
-          status
-        }
-      },
-
-      {
-        new: true,
-        upsert: true,
-        setDefaultsOnInsert: true
-      }
+  if (
+    formatAttendanceDate(requestedAttendanceDate) !==
+    tomorrowCalendarDate
+  ) {
+    throw new Error(
+      `Attendance date must be tomorrow (${tomorrowCalendarDate})`
     );
+  }
 
+  /*
+   * Read every tomorrow record instead of using findOne().
+   * Older releases could leave duplicate records with different
+   * time portions. The latest record is the source of truth and
+   * duplicates are removed after a successful update.
+   */
+  const existingRecords =
+    await Attendance.find({
+      parentId: parent.parentId,
+      date: {
+        $gte: tomorrowStart,
+        $lt: tomorrowEnd
+      }
+    })
+    .sort({
+      updatedAt: -1,
+      createdAt: -1,
+      _id: -1
+    });
+
+  let record =
+    pickLatestAttendanceRecord(existingRecords);
+
+  if (record) {
+    record.parentId = parent.parentId;
+    record.date = new Date(tomorrowStart);
+    record.status = status;
+
+    await record.save();
+
+    const duplicateIds = existingRecords
+      .filter(item => String(item._id) !== String(record._id))
+      .map(item => item._id);
+
+    if (duplicateIds.length > 0) {
+      await Attendance.deleteMany({
+        _id: { $in: duplicateIds }
+      });
+    }
+  } else {
+    record = await Attendance.create({
+      parentId: parent.parentId,
+      date: new Date(tomorrowStart),
+      status
+    });
+  }
 
   return {
     parent,
     record,
-    status,
-    date: tomorrowDate
+    status: record.status,
+    date: new Date(tomorrowStart)
   };
 };
 
