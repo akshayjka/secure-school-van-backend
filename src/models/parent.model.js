@@ -20,10 +20,6 @@ const locationSchema = new mongoose.Schema(
 
 const parentSchema = new mongoose.Schema(
   {
-    // =====================================================
-    // IDENTITY
-    // =====================================================
-
     parentId: {
       type: String,
       unique: true,
@@ -66,10 +62,6 @@ const parentSchema = new mongoose.Schema(
       default: false
     },
 
-    // =====================================================
-    // PARENT DETAILS
-    // =====================================================
-
     name: {
       type: String,
       required: true,
@@ -86,8 +78,8 @@ const parentSchema = new mongoose.Schema(
 
     password: {
       type: String,
-      default: null,
-      },
+      default: null
+    },
 
     email: {
       type: String,
@@ -101,10 +93,6 @@ const parentSchema = new mongoose.Schema(
       trim: true,
       default: null
     },
-
-    // =====================================================
-    // STUDENT
-    // =====================================================
 
     studentName: {
       type: String,
@@ -130,10 +118,6 @@ const parentSchema = new mongoose.Schema(
       trim: true
     },
 
-    // =====================================================
-    // PICKUP / HOME
-    // =====================================================
-
     pickupArea: {
       type: String,
       required: true,
@@ -150,10 +134,6 @@ const parentSchema = new mongoose.Schema(
       type: locationSchema,
       required: true
     },
-
-    // =====================================================
-    // SCHOOL
-    // =====================================================
 
     dropArea: {
       type: String,
@@ -172,67 +152,49 @@ const parentSchema = new mongoose.Schema(
       required: true
     },
 
-    // =====================================================
-    // SCHOOL METADATA
-    // =====================================================
-
     school: {
       name: {
         type: String,
         trim: true,
         default: ''
       },
-
       address: {
         type: String,
         trim: true,
         default: ''
       },
-
       latitude: {
         type: Number,
         default: null
       },
-
       longitude: {
         type: Number,
         default: null
       },
-
       placeId: {
         type: String,
         default: null
       },
-
       city: {
         type: String,
         default: null
       },
-
       state: {
         type: String,
         default: null
       },
-
       postcode: {
         type: String,
         default: null
       }
     },
 
-    // =====================================================
-    // ATTENDANCE
-    // =====================================================
-
     attendance: {
       type: Boolean,
       default: false
     },
 
-    // =====================================================
-    // MORNING JOURNEY
-    // =====================================================
-
+    // Morning: Home -> School
     morningPickedUpAt: {
       type: Date,
       default: null
@@ -253,10 +215,7 @@ const parentSchema = new mongoose.Schema(
       default: 'waiting'
     },
 
-    // =====================================================
-    // EVENING JOURNEY
-    // =====================================================
-
+    // Evening: School -> Home
     eveningPickedFromSchoolAt: {
       type: Date,
       default: null
@@ -283,10 +242,6 @@ const parentSchema = new mongoose.Schema(
   }
 );
 
-// =====================================================
-// INDEXES
-// =====================================================
-
 parentSchema.index({
   driverId: 1,
   attendance: 1
@@ -296,5 +251,4 @@ parentSchema.index({
   mobileNumber: 1
 });
 
-module.exports =
-  mongoose.model('Parent', parentSchema);
+module.exports = mongoose.model('Parent', parentSchema);

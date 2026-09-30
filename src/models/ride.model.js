@@ -1,77 +1,136 @@
 const mongoose = require('mongoose');
 
+const locationSchema = new mongoose.Schema(
+  {
+    latitude: {
+      type: Number,
+      required: true
+    },
+    longitude: {
+      type: Number,
+      required: true
+    },
+    timestamp: {
+      type: Date,
+      default: Date.now
+    }
+  },
+  { _id: false }
+);
+
+const locationPointSchema = new mongoose.Schema(
+  {
+    name: {
+      type: String,
+      default: ''
+    },
+    latitude: {
+      type: Number,
+      default: null
+    },
+    longitude: {
+      type: Number,
+      default: null
+    }
+  },
+  { _id: false }
+);
+
 const rideSchema = new mongoose.Schema(
   {
-
     rideId: {
       type: String,
-      unique: true
+      unique: true,
+      required: true,
+      index: true
     },
 
     driverId: {
       type: String,
-      required: true
+      required: true,
+      index: true
     },
 
-    // NEW
     rideType: {
       type: String,
       enum: ['morning', 'evening'],
-      required: true
+      required: true,
+      index: true
+    },
+
+    // Business date used to guarantee one ride of each type per day.
+    // Sparse index keeps legacy documents (created before this field) valid.
+    rideDate: {
+      type: String,
+      match: /^\d{4}-\d{2}-\d{2}$/,
+      default: undefined,
+      index: true
     },
 
     status: {
       type: String,
       enum: ['started', 'ended'],
-       required: true
+      default: 'started',
+      required: true,
+      index: true
     },
 
     startTime: {
-      type: Date
+      type: Date,
+      default: null,
+      index: true
     },
 
     endTime: {
-      type: Date
+      type: Date,
+      default: null
     },
 
     startLocation: {
-      name: String,
-      latitude: Number,
-      longitude: Number
+      type: locationPointSchema,
+      default: () => ({})
     },
 
     endLocation: {
-      name: String,
-      latitude: Number,
-      longitude: Number
+      type: locationPointSchema,
+      default: () => ({})
     },
 
-    currentLatitude: Number,
+    currentLatitude: {
+      type: Number,
+      default: null
+    },
 
-    currentLongitude: Number,
+    currentLongitude: {
+      type: Number,
+      default: null
+    },
 
-    locations: [
-      {
-
-        latitude: Number,
-
-        longitude: Number,
-
-        timestamp: {
-          type: Date,
-          default: Date.now
-        }
-
-      }
-    ]
-
+    locations: {
+      type: [locationSchema],
+      default: []
+    }
   },
-  {
-    timestamps: true
-  }
+  { timestamps: true }
 );
 
-module.exports = mongoose.model(
-  'Ride',
-  rideSchema
+rideSchema.index({
+  driverId: 1,
+  rideType: 1,
+  status: 1,
+  startTime: -1
+});
+
+// Prevent duplicate morning/evening rides for a driver on the same business day.
+// sparse=true allows legacy rides without rideDate to coexist until migrated.
+rideSchema.index(
+  { driverId: 1, rideType: 1, rideDate: 1 },
+  { unique: true, sparse: true, name: 'uniq_driver_ride_type_date' }
 );
+
+rideSchema.index({
+  driverId: 1,
+  createdAt: -1
+});
+
+module.exports = mongoose.model('Ride', rideSchema);

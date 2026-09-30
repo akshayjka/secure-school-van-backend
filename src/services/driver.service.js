@@ -1,229 +1,84 @@
 const Driver = require('../models/driver.model');
 const Parent = require('../models/parent.model');
+const Ride = require('../models/ride.model');
 
-// =====================================================
-// DRIVER ID
-// =====================================================
+/**
+ * =========================================================
+ * DATE HELPERS
+ * =========================================================
+ */
 
-const createDriverId = async () => {
-  const count = await Driver.countDocuments();
-  let sequence = count + 1;
+const getTodayRange = () => {
+  const start = new Date();
+  start.setHours(0, 0, 0, 0);
 
-  while (true) {
-    const driverId =
-      `DRV${String(sequence).padStart(6, '0')}`;
+  const end = new Date(start);
+  end.setDate(end.getDate() + 1);
 
-    const exists =
-      await Driver.exists({ driverId });
-
-    if (!exists) {
-      return driverId;
-    }
-
-    sequence += 1;
-  }
+  return { start, end };
 };
 
-// =====================================================
-// REGISTER DRIVER
-// =====================================================
+/**
+ * =========================================================
+ * DRIVER REGISTRATION / CRUD
+ * =========================================================
+ */
 
-const registerDriver = async (data) => {
-  const mobileNumber =
-    String(data?.mobileNumber || '')
-      .replace(/\D/g, '');
+const registerDriver = async (data = {}) => {
+  const mobileNumber = String(data.mobileNumber || '').trim();
 
-  const existingDriver =
-    await Driver.findOne({ mobileNumber });
+  if (!mobileNumber) {
+    throw new Error('Mobile number is required');
+  }
+
+  const existingDriver = await Driver.findOne({ mobileNumber });
 
   if (existingDriver) {
     return {
       success: false,
-      message: 'Driver already registered'
+      message: 'Driver already registered',
+      data: existingDriver
     };
   }
 
-  const driverId =
-    await createDriverId();
-
-  const count =
-    await Driver.countDocuments();
-
-  const referralCode =
-    `DRV${1000 + count + 1}`;
+  const count = await Driver.countDocuments();
+  const driverId = `DRV${String(count + 1).padStart(6, '0')}`;
+  const referralCode = `DRV${1000 + count + 1}`;
 
   let referredByDriver = null;
 
   if (data.referredByCode) {
-    referredByDriver =
-      await Driver.findOne({
-        referralCode:
-          data.referredByCode
-      });
+    referredByDriver = await Driver.findOne({
+      referralCode: String(data.referredByCode).trim()
+    });
 
     if (!referredByDriver) {
-      return {
-        success: false,
-        message: 'Invalid referral code'
-      };
+      throw new Error('Invalid referral code');
     }
   }
 
-  const driver =
-    await Driver.create({
-      ...data,
-
-      mobileNumber,
-
-      driverId,
-
-      referralCode,
-
-      registrationSource:
-        'driver',
-
-      referredByCode:
-        referredByDriver?.referralCode ||
-        null,
-
-      referredByDriverId:
-        referredByDriver?._id ||
-        null
-    });
+  const driver = await Driver.create({
+    ...data,
+    driverId,
+    referralCode,
+    referredByCode: referredByDriver?.referralCode || null,
+    referredByDriverId: referredByDriver?._id || null,
+    role: 'driver',
+    password: null
+  });
 
   if (referredByDriver) {
-    await Driver.findByIdAndUpdate(
-      referredByDriver._id,
-      {
-        $inc: {
-          referralCount: 1
-        }
-      }
-    );
+    await Driver.findByIdAndUpdate(referredByDriver._id, {
+      $inc: { referralCount: 1 }
+    });
   }
 
   return {
     success: true,
-    message:
-      'Driver registered successfully',
+    message: 'Driver registered successfully',
     data: driver
   };
 };
-
-// =====================================================
-// FIND DRIVER
-// =====================================================
-
-const findDriver = async ({
-  driverId,
-  mobile
-} = {}) => {
-  const normalizedMobile =
-    String(mobile || '')
-      .replace(/\D/g, '');
-
-  const normalizedDriverId =
-    String(driverId || '')
-      .trim();
-
-  const conditions = [];
-
-  if (normalizedDriverId) {
-    conditions.push({
-      driverId:
-        normalizedDriverId
-    });
-  }
-
-  if (normalizedMobile) {
-    conditions.push({
-      mobileNumber:
-        normalizedMobile
-    });
-  }
-
-  if (conditions.length === 0) {
-    throw new Error(
-      'Driver ID or mobile number is required'
-    );
-  }
-
-  const driver =
-    await Driver.findOne({
-      $or: conditions
-    }).select(
-      '+password'
-    );
-
-  if (!driver) {
-    throw new Error(
-      'Driver not found'
-    );
-  }
-
-  return driver;
-};
-
-// =====================================================
-// REFERRAL DETAILS
-// =====================================================
-
-const getReferralDetails = async (driverId) => {
-  const driver =
-    await Driver.findOne(
-      { driverId },
-      {
-        driverId: 1,
-        name: 1,
-        referralCode: 1,
-        referralCount: 1,
-        referredByCode: 1
-      }
-    );
-
-  if (!driver) {
-    throw new Error(
-      'Driver not found'
-    );
-  }
-
-  return driver;
-};
-
-// =====================================================
-// REFERRED DRIVERS
-// =====================================================
-
-const getReferredDrivers = async (driverId) => {
-  const driver =
-    await Driver.findOne({
-      driverId
-    });
-
-  if (!driver) {
-    throw new Error(
-      'Driver not found'
-    );
-  }
-
-  return Driver.find(
-    {
-      referredByCode:
-        driver.referralCode
-    },
-    {
-      driverId: 1,
-      name: 1,
-      mobileNumber: 1,
-      vehicleNumber: 1,
-      createdAt: 1
-    }
-  );
-};
-
-// =====================================================
-// GET ALL DRIVERS
-// =====================================================
 
 const getAllDrivers = async () => {
   return Driver.find(
@@ -237,147 +92,45 @@ const getAllDrivers = async () => {
       vehicleNumber: 1,
       routeArea: 1,
       isVerified: 1,
-      registrationSource: 1
+      referralCode: 1,
+      referralCount: 1,
+      referredByCode: 1,
+      createdAt: 1
     }
-  ).sort({
-    createdAt: -1
-  });
+  ).sort({ createdAt: -1 });
 };
 
-// =====================================================
-// ADD DRIVER - ADMIN
-// =====================================================
+const addDriver = async (data = {}) => {
+  const mobileNumber = String(data.mobileNumber || '').trim();
 
-const addDriver = async (data) => {
-  const mobileNumber =
-    String(data?.mobileNumber || '')
-      .replace(/\D/g, '');
-
-  if (!/^[6-9]\d{9}$/.test(mobileNumber)) {
-    throw new Error(
-      'Invalid driver mobile number'
-    );
+  if (!mobileNumber) {
+    throw new Error('Mobile number is required');
   }
 
-  const existingDriver =
-    await Driver.findOne({
-      mobileNumber
-    });
+  const existingDriver = await Driver.findOne({ mobileNumber });
 
   if (existingDriver) {
-    throw new Error(
-      'Driver already exists'
-    );
+    throw new Error('Driver already exists');
   }
 
-  const driverId =
-    await createDriverId();
+  const count = await Driver.countDocuments();
+  const driverId = `DRV${String(count + 1).padStart(6, '0')}`;
+  const referralCode = `DRV${1000 + count + 1}`;
 
   return Driver.create({
     ...data,
-
     driverId,
-
-    mobileNumber,
-
+    referralCode,
     role: 'driver',
-
-    password: null,
-
-    registrationSource:
-      'admin'
+    password: null
   });
 };
 
-// =====================================================
-// DRIVER DASHBOARD
-// =====================================================
-
-const getDashboard = async (driverId) => {
-  const driver =
-    await Driver.findOne({
-      driverId
-    });
-
-  if (!driver) {
-    throw new Error(
-      'Driver not found'
-    );
-  }
-
-  const students =
-    await Parent.find(
-      { driverId },
-      {
-        _id: 0,
-        parentId: 1,
-        name: 1,
-        mobileNumber: 1,
-        studentName: 1,
-        studentClass: 1,
-        studentSection: 1,
-        schoolName: 1,
-        pickupArea: 1,
-        dropArea: 1,
-        attendance: 1,
-        morningStatus: 1,
-        morningPickedUpAt: 1,
-        morningDroppedAtSchoolAt: 1,
-        eveningStatus: 1,
-        eveningPickedFromSchoolAt: 1,
-        eveningDroppedAtHomeAt: 1
-      }
-    );
-
-  const present =
-    students.filter(
-      student => student.attendance
-    ).length;
-
-  const absent =
-    students.filter(
-      student => !student.attendance
-    ).length;
-
-  return {
-    success: true,
-
-    driver: {
-      driverId:
-        driver.driverId,
-      name:
-        driver.name,
-      vehicleNumber:
-        driver.vehicleNumber,
-      routeArea:
-        driver.routeArea,
-      isVerified:
-        driver.isVerified
-    },
-
-    students,
-
-    todayStats: {
-      present,
-      absent,
-      total:
-        students.length
-    }
-  };
-};
-
-// =====================================================
-// GET / UPDATE / DELETE
-// =====================================================
-
 const getDriver = async (id) => {
-  return Driver.findById(id);
+  return Driver.findById(id).select('-password');
 };
 
-const updateDriver = async (
-  id,
-  data
-) => {
+const updateDriver = async (id, data) => {
   return Driver.findByIdAndUpdate(
     id,
     data,
@@ -385,16 +138,294 @@ const updateDriver = async (
       new: true,
       runValidators: true
     }
-  );
+  ).select('-password');
 };
 
 const deleteDriver = async (id) => {
   return Driver.findByIdAndDelete(id);
 };
 
+const getReferralDetails = async (driverId) => {
+  const driver = await Driver.findOne(
+    { driverId },
+    {
+      driverId: 1,
+      name: 1,
+      referralCode: 1,
+      referralCount: 1,
+      referredByCode: 1
+    }
+  );
+
+  if (!driver) {
+    throw new Error('Driver not found');
+  }
+
+  return driver;
+};
+
+const getReferredDrivers = async (driverId) => {
+  const driver = await Driver.findOne({ driverId });
+
+  if (!driver) {
+    throw new Error('Driver not found');
+  }
+
+  return Driver.find(
+    { referredByCode: driver.referralCode },
+    {
+      driverId: 1,
+      name: 1,
+      mobileNumber: 1,
+      vehicleNumber: 1,
+      createdAt: 1
+    }
+  ).sort({ createdAt: -1 });
+};
+
+/**
+ * =========================================================
+ * DRIVER DASHBOARD
+ * =========================================================
+ *
+ * MongoDB is the only source of truth.
+ *
+ * The dashboard MUST return the Parent journey states because
+ * the Ionic dashboard uses these states to render:
+ *
+ * morning:
+ *   waiting -> picked_up -> dropped_at_school
+ *
+ * evening:
+ *   waiting_school_finish -> picked_from_school -> dropped_at_home
+ *
+ * The workflow stage is calculated from the same data.
+ */
+
+const getDashboard = async (driverId) => {
+  const normalizedDriverId = String(driverId || '').trim();
+
+  if (!normalizedDriverId) {
+    throw new Error('Driver ID is required');
+  }
+
+  const driver = await Driver.findOne({
+    driverId: normalizedDriverId
+  }).select('-password');
+
+  if (!driver) {
+    throw new Error('Driver not found');
+  }
+
+  const { start, end } = getTodayRange();
+
+  const students = await Parent.find({
+    driverId: normalizedDriverId
+  })
+    .select({
+      _id: 0,
+      parentId: 1,
+      name: 1,
+      mobileNumber: 1,
+      studentName: 1,
+      studentClass: 1,
+      studentSection: 1,
+      schoolName: 1,
+      pickupArea: 1,
+      pickupAddress: 1,
+      pickupLocation: 1,
+      dropArea: 1,
+      schoolAddress: 1,
+      schoolLocation: 1,
+      attendance: 1,
+      morningStatus: 1,
+      morningPickedUpAt: 1,
+      morningDroppedAtSchoolAt: 1,
+      eveningStatus: 1,
+      eveningPickedFromSchoolAt: 1,
+      eveningDroppedAtHomeAt: 1,
+      createdAt: 1
+    })
+    .sort({ studentName: 1 });
+
+  const presentStudents = students.filter(
+    student => student.attendance === true
+  );
+
+  const absentStudents = students.filter(
+    student => student.attendance !== true
+  );
+
+  const [activeRide, morningRide, eveningRide] = await Promise.all([
+    Ride.findOne({
+      driverId: normalizedDriverId,
+      status: 'started',
+      startTime: { $gte: start, $lt: end }
+    }).sort({ startTime: -1 }),
+
+    Ride.findOne({
+      driverId: normalizedDriverId,
+      rideType: 'morning',
+      startTime: { $gte: start, $lt: end }
+    }).sort({ startTime: -1 }),
+
+    Ride.findOne({
+      driverId: normalizedDriverId,
+      rideType: 'evening',
+      startTime: { $gte: start, $lt: end }
+    }).sort({ startTime: -1 })
+  ]);
+
+  const morningPickedCount = presentStudents.filter(
+    student => student.morningStatus === 'picked_up'
+  ).length;
+
+  const morningDroppedCount = presentStudents.filter(
+    student => student.morningStatus === 'dropped_at_school'
+  ).length;
+
+  const returnWaitingCount = presentStudents.filter(
+    student => student.eveningStatus === 'waiting_school_finish'
+  ).length;
+
+  const returnOnboardCount = presentStudents.filter(
+    student => student.eveningStatus === 'picked_from_school'
+  ).length;
+
+  const returnDroppedCount = presentStudents.filter(
+    student => student.eveningStatus === 'dropped_at_home'
+  ).length;
+
+  const hasPresentStudents = presentStudents.length > 0;
+
+  const allMorningDropped =
+    hasPresentStudents &&
+    morningDroppedCount === presentStudents.length;
+
+  const allReturnDropped =
+    hasPresentStudents &&
+    returnDroppedCount === presentStudents.length;
+
+  const morningRideCompleted = Boolean(
+    morningRide?.status === 'ended' &&
+    allMorningDropped
+  );
+
+  const eveningRideCompleted = Boolean(
+    eveningRide?.status === 'ended' &&
+    allReturnDropped
+  );
+
+  let stage = 'morning-ready';
+  let nextRideType = null;
+
+  /*
+   * The order below is intentional.
+   * Active MongoDB ride always wins over derived UI state.
+   */
+  if (activeRide?.rideType === 'morning') {
+    if (allMorningDropped) {
+      stage = 'morning-complete';
+    } else if (morningPickedCount > 0) {
+      stage = 'morning-school-drop';
+    } else {
+      stage = 'morning-pickup';
+    }
+  } else if (activeRide?.rideType === 'evening') {
+    if (allReturnDropped) {
+      stage = 'return-complete';
+    } else if (returnOnboardCount > 0) {
+      stage = 'return-home-drop';
+    } else {
+      stage = 'return-boarding';
+    }
+  } else if (eveningRideCompleted) {
+    stage = 'day-complete';
+  } else if (morningRideCompleted) {
+    stage = 'return-ready';
+    nextRideType = 'evening';
+  } else if (morningRide?.status === 'ended') {
+    /*
+     * Defensive recovery for legacy/inconsistent data.
+     * The new backend prevents this state from being created.
+     */
+    if (morningPickedCount > 0 && !allMorningDropped) {
+      stage = 'morning-school-drop';
+    } else {
+      stage = 'morning-ready';
+      nextRideType = 'morning';
+    }
+  } else {
+    stage = 'morning-ready';
+    nextRideType = 'morning';
+  }
+
+  if (!activeRide && stage === 'return-ready') {
+    nextRideType = 'evening';
+  }
+
+  if (!activeRide && stage === 'day-complete') {
+    nextRideType = null;
+  }
+
+  const workflow = {
+    stage,
+    activeRideType: activeRide?.rideType || null,
+    activeRideStatus: activeRide?.status || null,
+    activeRideId: activeRide?.rideId || null,
+    activeRideStartTime: activeRide?.startTime || null,
+    activeRideEndTime: activeRide?.endTime || null,
+    nextRideType,
+    morningRideId: morningRide?.rideId || null,
+    morningRideStatus: morningRide?.status || null,
+    morningRideCompleted,
+    eveningRideId: eveningRide?.rideId || null,
+    eveningRideStatus: eveningRide?.status || null,
+    eveningRideCompleted,
+    counts: {
+      total: students.length,
+      present: presentStudents.length,
+      absent: absentStudents.length,
+      morningPicked: morningPickedCount,
+      morningDropped: morningDroppedCount,
+      returnWaiting: returnWaitingCount,
+      returnOnboard: returnOnboardCount,
+      returnDropped: returnDroppedCount
+    }
+  };
+
+  return {
+    success: true,
+    driver: {
+      driverId: driver.driverId,
+      name: driver.name,
+      mobileNumber: driver.mobileNumber,
+      vehicleNumber: driver.vehicleNumber,
+      routeArea: driver.routeArea,
+      referralCode: driver.referralCode || '',
+      referralCount: driver.referralCount || 0,
+      referredByCode: driver.referredByCode || ''
+    },
+    students: students.map(student => ({
+      ...student.toObject(),
+      morningStatus: student.morningStatus || 'waiting',
+      eveningStatus: student.eveningStatus || 'waiting_school_finish',
+      morningPickedUpAt: student.morningPickedUpAt || null,
+      morningDroppedAtSchoolAt: student.morningDroppedAtSchoolAt || null,
+      eveningPickedFromSchoolAt: student.eveningPickedFromSchoolAt || null,
+      eveningDroppedAtHomeAt: student.eveningDroppedAtHomeAt || null
+    })),
+    todayStats: {
+      present: presentStudents.length,
+      absent: absentStudents.length,
+      total: students.length
+    },
+    workflow
+  };
+};
+
 module.exports = {
   registerDriver,
-  findDriver,
   getAllDrivers,
   addDriver,
   getDashboard,

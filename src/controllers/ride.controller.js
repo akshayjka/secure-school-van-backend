@@ -1,1127 +1,589 @@
-
-const Ride = require('../models/ride.model');
 const Parent = require('../models/parent.model');
-
-const rideService =
-  require('../services/ride.service');
+const rideService = require('../services/ride.service');
 
 /**
- * =========================================================
- * SOCKET HELPERS
- * =========================================================
+ * Socket rooms used by the application:
+ *   driver_<driverId>  -> driver dashboard
+ *   <parentId>         -> parent dashboard
  */
+const getDriverRoom = driverId => `driver_${driverId}`;
 
-const getDriverRoom = (
-  driverId
-) => `driver_${driverId}`;
-
-const emitDriverChannel = (
-  io,
-  driverId,
-  event,
-  payload = {}
-) => {
-  if (!io || !driverId) {
-    return;
-  }
-
-  io.to(
-    getDriverRoom(driverId)
-  ).emit(
-    event,
-    payload
-  );
+const emitDriver = (io, driverId, event, payload = {}) => {
+  if (!io || !driverId) return;
+  io.to(getDriverRoom(driverId)).emit(event, payload);
 };
 
-const emitParent = (
-  io,
-  parentId,
-  event,
-  payload = {}
-) => {
-  if (!io || !parentId) {
-    return;
-  }
-
-  io.to(
-    parentId
-  ).emit(
-    event,
-    payload
-  );
+const emitParent = (io, parentId, event, payload = {}) => {
+  if (!io || !parentId) return;
+  io.to(parentId).emit(event, payload);
 };
 
-const getParentIdsForDriver =
-  async (
-    driverId
-  ) => {
-    const parents =
-      await Parent.find(
-        {
-          driverId
-        },
-        {
-          parentId: 1,
-          _id: 0
-        }
-      ).lean();
+const getParentIdsForDriver = async driverId => {
+  const parents = await Parent.find(
+    { driverId },
+    { parentId: 1, _id: 0 }
+  ).lean();
 
-    return parents
-      .map(p => p.parentId)
-      .filter(Boolean);
-  };
+  return parents.map(p => p.parentId).filter(Boolean);
+};
 
-const broadcastRideEvent =
-  async (
-    io,
+const broadcastRideEvent = async (io, driverId, event, ride) => {
+  if (!ride) return;
+
+  const payload = {
     driverId,
-    event,
-    ride
-  ) => {
-    if (!ride) {
-      return;
-    }
-
-    const payload = {
-      driverId,
-      rideId:
-        ride.rideId,
-      rideType:
-        ride.rideType,
-      status:
-        ride.status,
-      rideStarted:
-        ride.status ===
-        'started',
-      startTime:
-        ride.startTime ||
-        null,
-      endTime:
-        ride.endTime ||
-        null,
-      timestamp:
-        Date.now()
-    };
-
-    /*
-     * Driver channel.
-     */
-    emitDriverChannel(
-      io,
-      driverId,
-      event,
-      payload
-    );
-
-    /*
-     * Parent rooms.
-     *
-     * This guarantees the Parent Dashboard receives the
-     * event even if it is not listening on the driver room.
-     */
-    const parentIds =
-      await getParentIdsForDriver(
-        driverId
-      );
-
-    parentIds.forEach(
-      parentId => {
-        emitParent(
-          io,
-          parentId,
-          event,
-          payload
-        );
-      }
-    );
-
-    /*
-     * Dashboard refresh event.
-     */
-    parentIds.forEach(
-      parentId => {
-        emitParent(
-          io,
-          parentId,
-          'dashboardUpdated',
-          {
-            type:
-              event === 'rideStarted'
-                ? 'ride_started'
-                : 'ride_ended',
-
-            driverId,
-
-            rideId:
-              ride.rideId,
-
-            rideType:
-              ride.rideType,
-
-            status:
-              ride.status,
-
-            rideStarted:
-              ride.status ===
-              'started',
-
-            timestamp:
-              Date.now()
-          }
-        );
-      }
-    );
+    rideId: ride.rideId,
+    rideType: ride.rideType,
+    status: ride.status,
+    rideStarted: ride.status === 'started',
+    startTime: ride.startTime || null,
+    endTime: ride.endTime || null,
+    timestamp: Date.now()
   };
 
-const broadcastDashboardUpdate =
-  async (
-    io,
+  emitDriver(io, driverId, event, payload);
+
+  const parentIds = await getParentIdsForDriver(driverId);
+
+  for (const parentId of parentIds) {
+    emitParent(io, parentId, event, payload);
+    emitParent(io, parentId, 'dashboardUpdated', {
+      type: event === 'rideStarted' ? 'ride_started' : 'ride_ended',
+      ...payload
+    });
+  }
+};
+
+const broadcastStudentStatus = async (
+  io,
+  { parentId, driverId, rideType, status, timestamp, rideId }
+) => {
+  const payload = {
+    parentId,
     driverId,
-    type,
-    extra = {}
-  ) => {
-    const payload = {
-      type,
-      driverId,
-      ...extra,
-      timestamp:
-        Date.now()
-    };
-
-    emitDriverChannel(
-      io,
-      driverId,
-      'dashboardUpdated',
-      payload
-    );
-
-    const parentIds =
-      await getParentIdsForDriver(
-        driverId
-      );
-
-    parentIds.forEach(
-      parentId => {
-        emitParent(
-          io,
-          parentId,
-          'dashboardUpdated',
-          payload
-        );
-      }
-    );
+    rideType,
+    status,
+    timestamp: timestamp || new Date(),
+    rideId: rideId || null
   };
 
-/**
- * =========================================================
- * DAILY JOURNEY REPORT
- * =========================================================
- */
+  // Parent receives its own student state.
+  emitParent(io, parentId, 'studentStatusUpdated', payload);
+  emitParent(io, parentId, 'dashboardUpdated', {
+    type: 'student_status_updated',
+    ...payload
+  });
 
-exports.getStudentJourneyReport =
-  async (
-    req,
-    res
-  ) => {
-    try {
-      const {
-        parentId
-      } = req.params;
+  // Driver receives the same persisted state event.
+  emitDriver(io, driverId, 'studentStatusUpdated', payload);
+  emitDriver(io, driverId, 'dashboardUpdated', {
+    type: 'student_status_updated',
+    ...payload
+  });
+};
 
-      const {
-        date
-      } = req.query;
+const validateBodyIds = (req, res) => {
+  const { driverId, parentId } = req.body || {};
 
-      if (!parentId) {
-        return res.status(400).json({
-          success: false,
-          message:
-            'parentId is required'
-        });
-      }
+  if (!driverId || !parentId) {
+    res.status(400).json({
+      success: false,
+      message: 'driverId and parentId are required'
+    });
+    return false;
+  }
 
-      if (!date) {
-        return res.status(400).json({
-          success: false,
-          message:
-            'date is required'
-        });
-      }
+  return true;
+};
 
-      const data =
-        await rideService
-          .getStudentJourneyReport(
-            parentId,
-            date
-          );
+/** START RIDE */
+exports.startRide = async (req, res) => {
+  try {
+    const { driverId, rideType } = req.body || {};
 
-      return res.status(200).json({
-        success: true,
-        data
-      });
-    } catch (error) {
-      console.error(
-        'GET JOURNEY REPORT ERROR:',
-        error
-      );
-
-      return res.status(500).json({
-        success: false,
-        message:
-          error.message ||
-          'Unable to get journey report'
-      });
-    }
-  };
-
-/**
- * =========================================================
- * START RIDE
- * =========================================================
- */
-
-exports.startRide =
-  async (
-    req,
-    res
-  ) => {
-    try {
-      const {
-        driverId,
-        rideType
-      } = req.body;
-
-      if (
-        !driverId ||
-        !rideType
-      ) {
-        return res.status(400).json({
-          success: false,
-          message:
-            'driverId and rideType are required'
-        });
-      }
-
-      if (
-        !['morning', 'evening']
-          .includes(rideType)
-      ) {
-        return res.status(400).json({
-          success: false,
-          message:
-            'Invalid rideType'
-        });
-      }
-
-      const result =
-        await rideService
-          .startRide(
-            driverId,
-            rideType
-          );
-
-      const ride =
-        result.ride;
-
-      const alreadyStarted =
-        result.alreadyStarted ===
-        true;
-
-      const io =
-        req.app.get('io');
-
-      /*
-       * Only broadcast when the database transitioned
-       * from no active ride -> active ride.
-       */
-      if (!alreadyStarted) {
-        await broadcastRideEvent(
-          io,
-          driverId,
-          'rideStarted',
-          ride
-        );
-
-        await broadcastDashboardUpdate(
-          io,
-          driverId,
-          'ride_started',
-          {
-            rideId:
-              ride.rideId,
-            rideType:
-              ride.rideType,
-            status:
-              ride.status,
-            rideStarted:
-              true
-          }
-        );
-      }
-
-      return res.status(
-        alreadyStarted
-          ? 200
-          : 201
-      ).json({
-        success: true,
-
-        alreadyStarted,
-
-        message:
-          alreadyStarted
-            ? `${rideType} ride already active`
-            : `${rideType} ride started successfully`,
-
-        data: {
-          rideId:
-            ride.rideId,
-
-          driverId:
-            ride.driverId,
-
-          rideType:
-            ride.rideType,
-
-          status:
-            ride.status,
-
-          rideStarted:
-            ride.status ===
-            'started',
-
-          startTime:
-            ride.startTime,
-
-          endTime:
-            ride.endTime ||
-            null
-        }
-      });
-    } catch (error) {
-      console.error(
-        'Start Ride Error:',
-        error
-      );
-
+    if (!driverId || !rideType) {
       return res.status(400).json({
         success: false,
-        message:
-          error.message ||
-          'Unable to start ride'
+        message: 'driverId and rideType are required'
       });
     }
-  };
 
-/**
- * =========================================================
- * UPDATE LOCATION
- * =========================================================
- */
+    if (!['morning', 'evening'].includes(rideType)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid rideType'
+      });
+    }
 
-exports.updateLocation =
-  async (
-    req,
-    res
-  ) => {
-    try {
-      const {
+    const result = await rideService.startRide(driverId, rideType);
+    const io = req.app.get('io');
+
+    if (!result.alreadyStarted) {
+      await broadcastRideEvent(io, driverId, 'rideStarted', result.ride);
+    }
+
+    return res.status(result.alreadyStarted ? 200 : 201).json({
+      success: true,
+      alreadyStarted: result.alreadyStarted,
+      message: result.alreadyStarted
+        ? `${rideType} ride already active`
+        : `${rideType} ride started successfully`,
+      data: {
+        rideId: result.ride.rideId,
+        driverId: result.ride.driverId,
+        rideType: result.ride.rideType,
+        rideDate: result.ride.rideDate || null,
+        status: result.ride.status,
+        rideStarted: result.ride.status === 'started',
+        startTime: result.ride.startTime,
+        endTime: result.ride.endTime || null
+      }
+    });
+  } catch (error) {
+    console.error('START RIDE ERROR:', error);
+    return res.status(400).json({
+      success: false,
+      message: error.message || 'Unable to start ride'
+    });
+  }
+};
+
+/** END RIDE */
+exports.endRide = async (req, res) => {
+  try {
+    const { driverId, rideType } = req.body || {};
+
+    if (!driverId || !rideType) {
+      return res.status(400).json({
+        success: false,
+        message: 'driverId and rideType are required'
+      });
+    }
+
+    const ride = await rideService.endRide(driverId, rideType);
+    const io = req.app.get('io');
+
+    await broadcastRideEvent(io, driverId, 'rideEnded', ride);
+
+    return res.status(200).json({
+      success: true,
+      message: `${rideType} ride ended successfully`,
+      data: {
+        rideId: ride.rideId,
+        driverId: ride.driverId,
+        rideType: ride.rideType,
+        rideDate: ride.rideDate || null,
+        status: ride.status,
+        rideStarted: false,
+        startTime: ride.startTime,
+        endTime: ride.endTime
+      }
+    });
+  } catch (error) {
+    console.error('END RIDE ERROR:', error);
+    return res.status(400).json({
+      success: false,
+      message: error.message || 'Unable to end ride'
+    });
+  }
+};
+
+/** LOCATION */
+exports.updateLocation = async (req, res) => {
+  try {
+    const { driverId, rideType, latitude, longitude } = req.body || {};
+
+    if (!driverId || !rideType) {
+      return res.status(400).json({
+        success: false,
+        message: 'driverId and rideType are required'
+      });
+    }
+
+    const ride = await rideService.updateLocation(
+      driverId,
+      rideType,
+      latitude,
+      longitude
+    );
+
+    const io = req.app.get('io');
+
+    emitDriver(io, driverId, 'locationUpdated', {
+      driverId,
+      rideId: ride.rideId,
+      rideType: ride.rideType,
+      latitude: ride.currentLatitude,
+      longitude: ride.currentLongitude,
+      status: ride.status,
+      timestamp: Date.now()
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: 'Location updated successfully',
+      data: {
+        rideId: ride.rideId,
         driverId,
         rideType,
-        latitude,
-        longitude
-      } = req.body;
-
-      if (
-        !driverId ||
-        !rideType
-      ) {
-        return res.status(400).json({
-          success: false,
-          message:
-            'driverId and rideType are required'
-        });
+        latitude: ride.currentLatitude,
+        longitude: ride.currentLongitude,
+        status: ride.status
       }
+    });
+  } catch (error) {
+    console.error('LOCATION UPDATE ERROR:', error);
+    return res.status(400).json({
+      success: false,
+      message: error.message || 'Unable to update location'
+    });
+  }
+};
 
-      const ride =
-        await rideService
-          .updateLocation(
-            driverId,
-            rideType,
-            latitude,
-            longitude
-          );
+/** RIDE STATUS */
+exports.getRideStatus = async (req, res) => {
+  try {
+    const { driverId, rideType: routeRideType } = req.params;
+    const { rideType: queryRideType, parentId } = req.query;
+    const rideType = routeRideType || queryRideType;
 
-      const io =
-        req.app.get('io');
-
-      /*
-       * Location is also a dashboard synchronization event,
-       * but ride state still comes from MongoDB.
-       */
-      emitDriverChannel(
-        io,
-        driverId,
-        'locationUpdated',
-        {
-          driverId,
-          rideId:
-            ride.rideId,
-          rideType:
-            ride.rideType,
-          latitude:
-            ride.currentLatitude,
-          longitude:
-            ride.currentLongitude,
-          status:
-            ride.status,
-          timestamp:
-            Date.now()
-        }
-      );
-
-      await broadcastDashboardUpdate(
-        io,
-        driverId,
-        'location_updated',
-        {
-          rideId:
-            ride.rideId,
-          rideType:
-            ride.rideType,
-          status:
-            ride.status
-        }
-      );
-
-      return res.status(200).json({
-        success: true,
-        message:
-          'Location updated successfully',
-        data: {
-          rideId:
-            ride.rideId,
-          driverId,
-          rideType,
-          latitude:
-            ride.currentLatitude,
-          longitude:
-            ride.currentLongitude,
-          status:
-            ride.status
-        }
-      });
-    } catch (error) {
-      console.error(
-        'Location Update Error:',
-        error
-      );
-
+    if (!driverId) {
       return res.status(400).json({
         success: false,
-        message:
-          error.message ||
-          'Unable to update location'
+        message: 'driverId is required'
       });
     }
-  };
 
-/**
- * =========================================================
- * END RIDE
- * =========================================================
- */
+    const data = await rideService.getRideStatus(
+      driverId,
+      rideType,
+      parentId
+    );
 
-exports.endRide =
-  async (
-    req,
-    res
-  ) => {
-    try {
-      const {
-        driverId,
-        rideType
-      } = req.body;
+    return res.status(200).json({ success: true, data });
+  } catch (error) {
+    console.error('GET RIDE STATUS ERROR:', error);
+    return res.status(500).json({
+      success: false,
+      message: error.message || 'Unable to get ride status'
+    });
+  }
+};
 
-      if (
-        !driverId ||
-        !rideType
-      ) {
-        return res.status(400).json({
-          success: false,
-          message:
-            'driverId and rideType are required'
-        });
-      }
+/** LIVE LOCATION */
+exports.getLiveLocation = async (req, res) => {
+  try {
+    const { driverId, rideType } = req.params;
+    const { parentId } = req.query;
 
-      if (
-        !['morning', 'evening']
-          .includes(rideType)
-      ) {
-        return res.status(400).json({
-          success: false,
-          message:
-            'Invalid rideType'
-        });
-      }
-
-      const ride =
-        await rideService
-          .endRide(
-            driverId,
-            rideType
-          );
-
-      const io =
-        req.app.get('io');
-
-      await broadcastRideEvent(
-        io,
-        driverId,
-        'rideEnded',
-        ride
-      );
-
-      await broadcastDashboardUpdate(
-        io,
-        driverId,
-        'ride_ended',
-        {
-          rideId:
-            ride.rideId,
-          rideType:
-            ride.rideType,
-          status:
-            ride.status,
-          rideStarted:
-            false
-        }
-      );
-
-      return res.status(200).json({
-        success: true,
-
-        message:
-          `${rideType} ride ended successfully`,
-
-        data: {
-          rideId:
-            ride.rideId,
-
-          driverId:
-            ride.driverId,
-
-          rideType:
-            ride.rideType,
-
-          status:
-            ride.status,
-
-          rideStarted:
-            false,
-
-          startTime:
-            ride.startTime,
-
-          endTime:
-            ride.endTime
-        }
-      });
-    } catch (error) {
-      console.error(
-        'End Ride Error:',
-        error
-      );
-
+    if (!driverId || !rideType || !parentId) {
       return res.status(400).json({
-        success: false,
-        message:
-          error.message ||
-          'Unable to end ride'
-      });
-    }
-  };
-
-/**
- * =========================================================
- * LIVE LOCATION
- * =========================================================
- */
-
-exports.getLiveLocation =
-  async (
-    req,
-    res
-  ) => {
-    try {
-      const {
-        driverId,
-        rideType
-      } = req.params;
-
-      const {
-        parentId
-      } = req.query;
-
-      if (
-        !driverId ||
-        !rideType ||
-        !parentId
-      ) {
-        return res.status(400).json({
-          success: false,
-          trackingAvailable: false,
-          message:
-            'driverId, rideType and parentId are required'
-        });
-      }
-
-      if (
-        !['morning', 'evening']
-          .includes(rideType)
-      ) {
-        return res.status(400).json({
-          success: false,
-          trackingAvailable: false,
-          message:
-            'Invalid rideType'
-        });
-      }
-
-      const parent =
-        await Parent.findOne({
-          parentId,
-          driverId
-        });
-
-      if (!parent) {
-        return res.status(403).json({
-          success: false,
-          trackingAvailable: false,
-          message:
-            'Parent is not assigned to this driver'
-        });
-      }
-
-      /*
-       * IMPORTANT:
-       * Only today's active ride can be tracked.
-       */
-      const status =
-        await rideService
-          .getRideStatus(
-            driverId,
-            rideType,
-            parentId
-          );
-
-      if (
-        status.rideStarted !== true ||
-        status.status !== 'started'
-      ) {
-        return res.status(404).json({
-          success: false,
-          trackingAvailable: false,
-          message:
-            'No active ride found'
-        });
-      }
-
-      if (
-        parent.attendance !== true
-      ) {
-        return res.status(403).json({
-          success: false,
-          trackingAvailable: false,
-          message:
-            'Live tracking is unavailable because the student is absent'
-        });
-      }
-
-      if (
-        rideType === 'morning'
-      ) {
-        if (
-          parent.morningStatus ===
-          'dropped_at_school'
-        ) {
-          return res.status(403).json({
-            success: false,
-            trackingAvailable: false,
-            message:
-              'Morning tracking ended because the student reached school'
-          });
-        }
-
-        /*
-         * Existing product rule:
-         * morning tracking is available after pickup.
-         */
-        if (
-          parent.morningStatus !==
-          'picked_up'
-        ) {
-          return res.status(403).json({
-            success: false,
-            trackingAvailable: false,
-            message:
-              'Live tracking is available after student pickup'
-          });
-        }
-      }
-
-      if (
-        rideType === 'evening'
-      ) {
-        /*
-         * Return tracking is available only after
-         * the student has boarded the return van.
-         */
-        if (
-          parent.eveningStatus !==
-          'picked_from_school'
-        ) {
-          return res.status(403).json({
-            success: false,
-            trackingAvailable: false,
-            message:
-              'Live tracking is available after school pickup'
-          });
-        }
-      }
-
-      return res.status(200).json({
-        success: true,
-        trackingAvailable: true,
-
-        data: {
-          rideId:
-            status.rideId,
-
-          driverId,
-
-          rideType,
-
-          latitude:
-            status.currentLatitude,
-
-          longitude:
-            status.currentLongitude,
-
-          startTime:
-            status.startTime,
-
-          status:
-            status.status,
-
-          updatedAt:
-            status.updatedAt ||
-            null
-        }
-      });
-    } catch (error) {
-      console.error(
-        'Live Location Error:',
-        error
-      );
-
-      return res.status(500).json({
         success: false,
         trackingAvailable: false,
-        message:
-          error.message ||
-          'Unable to get live location'
+        message: 'driverId, rideType and parentId are required'
       });
     }
-  };
 
-/**
- * =========================================================
- * RIDE STATUS
- * =========================================================
- */
+    if (!['morning', 'evening'].includes(rideType)) {
+      return res.status(400).json({
+        success: false,
+        trackingAvailable: false,
+        message: 'Invalid rideType'
+      });
+    }
 
-exports.getRideStatus =
-  async (
-    req,
-    res
-  ) => {
-    try {
-      const {
-        driverId
-      } = req.params;
+    const parent = await Parent.findOne({ parentId, driverId });
 
-      const {
+    if (!parent) {
+      return res.status(403).json({
+        success: false,
+        trackingAvailable: false,
+        message: 'Parent is not assigned to this driver'
+      });
+    }
+
+    const status = await rideService.getRideStatus(
+      driverId,
+      rideType,
+      parentId
+    );
+
+    if (!status.rideStarted || status.status !== 'started') {
+      return res.status(404).json({
+        success: false,
+        trackingAvailable: false,
+        message: 'No active ride found'
+      });
+    }
+
+    if (parent.attendance !== true) {
+      return res.status(403).json({
+        success: false,
+        trackingAvailable: false,
+        message: 'Live tracking is unavailable because the student is absent'
+      });
+    }
+
+    if (
+      rideType === 'morning' &&
+      parent.morningStatus !== 'picked_up'
+    ) {
+      return res.status(403).json({
+        success: false,
+        trackingAvailable: false,
+        message: parent.morningStatus === 'dropped_at_school'
+          ? 'Morning tracking ended because the student reached school'
+          : 'Live tracking is available after student pickup'
+      });
+    }
+
+    if (
+      rideType === 'evening' &&
+      parent.eveningStatus !== 'picked_from_school'
+    ) {
+      return res.status(403).json({
+        success: false,
+        trackingAvailable: false,
+        message: parent.eveningStatus === 'dropped_at_home'
+          ? 'Evening tracking ended because the student reached home'
+          : 'Live tracking is available after school pickup'
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      trackingAvailable: true,
+      data: {
+        rideId: status.rideId,
+        driverId,
         rideType,
-        parentId
-      } = req.query;
-
-      if (!driverId) {
-        return res.status(400).json({
-          success: false,
-          message:
-            'driverId is required'
-        });
+        latitude: status.currentLatitude,
+        longitude: status.currentLongitude,
+        startTime: status.startTime,
+        status: status.status,
+        updatedAt: status.updatedAt || null,
+        journeyTimes: status.journeyTimes
       }
+    });
+  } catch (error) {
+    console.error('LIVE LOCATION ERROR:', error);
+    return res.status(500).json({
+      success: false,
+      trackingAvailable: false,
+      message: error.message || 'Unable to get live location'
+    });
+  }
+};
 
-      const data =
-        await rideService
-          .getRideStatus(
-            driverId,
-            rideType,
-            parentId
-          );
+/** MORNING PICKUP */
+exports.pickStudentMorning = async (req, res) => {
+  try {
+    if (!validateBodyIds(req, res)) return;
 
-      return res.status(200).json({
-        success: true,
-        data
-      });
-    } catch (error) {
-      console.error(
-        'Get Ride Status Error:',
-        error
-      );
+    const { driverId, parentId } = req.body;
+    const result = await rideService.pickStudentMorning(driverId, parentId);
+    const io = req.app.get('io');
 
-      return res.status(500).json({
-        success: false,
-        message:
-          error.message ||
-          'Unable to get ride status'
-      });
-    }
-  };
+    await broadcastStudentStatus(io, {
+      parentId,
+      driverId,
+      rideType: 'morning',
+      status: 'picked_up',
+      timestamp: result.timestamp,
+      rideId: result.rideId
+    });
 
-/**
- * =========================================================
- * MORNING PICKUP
- * =========================================================
- */
+    return res.status(200).json({ success: true, data: result });
+  } catch (error) {
+    console.error('MORNING PICKUP ERROR:', error);
+    return res.status(400).json({
+      success: false,
+      message: error.message || 'Unable to pick student'
+    });
+  }
+};
 
-exports.pickStudentMorning =
-  async (
-    req,
-    res
-  ) => {
-    try {
-      const {
-        driverId,
-        parentId
-      } = req.body;
+/** MORNING SCHOOL DROP */
+exports.dropStudentSchool = async (req, res) => {
+  try {
+    if (!validateBodyIds(req, res)) return;
 
-      if (
-        !driverId ||
-        !parentId
-      ) {
-        return res.status(400).json({
-          success: false,
-          message:
-            'driverId and parentId are required'
-        });
-      }
+    const { driverId, parentId } = req.body;
+    const result = await rideService.dropStudentSchool(driverId, parentId);
+    const io = req.app.get('io');
 
-      const result =
-        await rideService
-          .pickStudentMorning(
-            driverId,
-            parentId
-          );
+    await broadcastStudentStatus(io, {
+      parentId,
+      driverId,
+      rideType: 'morning',
+      status: 'dropped_at_school',
+      timestamp: result.timestamp,
+      rideId: result.rideId
+    });
 
-      const io =
-        req.app.get('io');
+    return res.status(200).json({ success: true, data: result });
+  } catch (error) {
+    console.error('MORNING SCHOOL DROP ERROR:', error);
+    return res.status(400).json({
+      success: false,
+      message: error.message || 'Unable to drop student at school'
+    });
+  }
+};
 
-      emitParent(
-        io,
-        parentId,
-        'studentStatusUpdated',
-        {
-          parentId,
-          driverId,
-          rideType:
-            'morning',
-          status:
-            'picked_up',
-          timestamp:
-            result.timestamp
-        }
-      );
+/** EVENING SCHOOL PICKUP */
+exports.pickStudentFromSchool = async (req, res) => {
+  try {
+    if (!validateBodyIds(req, res)) return;
 
-      return res.status(200).json({
-        success: true,
-        data: result
-      });
-    } catch (error) {
+    const { driverId, parentId } = req.body;
+    const result = await rideService.pickStudentFromSchool(driverId, parentId);
+    const io = req.app.get('io');
+
+    await broadcastStudentStatus(io, {
+      parentId,
+      driverId,
+      rideType: 'evening',
+      status: 'picked_from_school',
+      timestamp: result.timestamp,
+      rideId: result.rideId
+    });
+
+    return res.status(200).json({ success: true, data: result });
+  } catch (error) {
+    console.error('EVENING SCHOOL PICKUP ERROR:', error);
+    return res.status(400).json({
+      success: false,
+      message: error.message || 'Unable to pick student from school'
+    });
+  }
+};
+
+/** EVENING HOME DROP */
+exports.dropStudentHome = async (req, res) => {
+  try {
+    if (!validateBodyIds(req, res)) return;
+
+    const { driverId, parentId } = req.body;
+    const result = await rideService.dropStudentHome(driverId, parentId);
+    const io = req.app.get('io');
+
+    await broadcastStudentStatus(io, {
+      parentId,
+      driverId,
+      rideType: 'evening',
+      status: 'dropped_at_home',
+      timestamp: result.timestamp,
+      rideId: result.rideId
+    });
+
+    return res.status(200).json({ success: true, data: result });
+  } catch (error) {
+    console.error('EVENING HOME DROP ERROR:', error);
+    return res.status(400).json({
+      success: false,
+      message: error.message || 'Unable to drop student at home'
+    });
+  }
+};
+
+/** JOURNEY REPORT */
+exports.getStudentJourneyReport = async (req, res) => {
+  try {
+    const { parentId } = req.params;
+    const { date } = req.query;
+
+    if (!parentId || !date) {
       return res.status(400).json({
         success: false,
-        message:
-          error.message
+        message: 'parentId and date are required'
       });
     }
-  };
+
+    const report = await rideService.getStudentJourneyReport(
+      parentId,
+      date
+    );
+
+    return res.status(200).json({ success: true, data: report });
+  } catch (error) {
+    console.error('GET JOURNEY REPORT ERROR:', error);
+    return res.status(500).json({
+      success: false,
+      message: error.message || 'Unable to get journey report'
+    });
+  }
+};
+
 
 /**
- * =========================================================
- * MORNING DROP
- * =========================================================
+ * TEST-ONLY: RESET TODAY'S COMPLETED RIDE CYCLE
+ *
+ * This endpoint is intentionally disabled in production.
+ * It is used only to repeat Home -> School -> Home tests
+ * without waiting for the next business day.
  */
+exports.resetTestCycle = async (req, res) => {
+  try {
+    const enabled =
+      process.env.NODE_ENV !== 'production' &&
+      process.env.ENABLE_RIDE_TEST_RESET !== 'false';
 
-exports.dropStudentSchool =
-  async (
-    req,
-    res
-  ) => {
-    try {
-      const {
-        driverId,
-        parentId
-      } = req.body;
-
-      const result =
-        await rideService
-          .dropStudentSchool(
-            driverId,
-            parentId
-          );
-
-      const io =
-        req.app.get('io');
-
-      emitParent(
-        io,
-        parentId,
-        'studentStatusUpdated',
-        {
-          parentId,
-          driverId,
-          rideType:
-            'morning',
-          status:
-            'dropped_at_school',
-          timestamp:
-            result.timestamp
-        }
-      );
-
-      return res.status(200).json({
-        success: true,
-        data: result
-      });
-    } catch (error) {
-      return res.status(400).json({
+    if (!enabled) {
+      return res.status(404).json({
         success: false,
-        message:
-          error.message
+        message: 'Test ride reset is disabled'
       });
     }
-  };
 
-/**
- * =========================================================
- * EVENING PICKUP
- * =========================================================
- */
+    const { driverId } = req.body || {};
 
-exports.pickStudentFromSchool =
-  async (
-    req,
-    res
-  ) => {
-    try {
-      const {
-        driverId,
-        parentId
-      } = req.body;
-
-      const result =
-        await rideService
-          .pickStudentFromSchool(
-            driverId,
-            parentId
-          );
-
-      const io =
-        req.app.get('io');
-
-      emitParent(
-        io,
-        parentId,
-        'studentStatusUpdated',
-        {
-          parentId,
-          driverId,
-          rideType:
-            'evening',
-          status:
-            'picked_from_school',
-          timestamp:
-            result.timestamp
-        }
-      );
-
-      return res.status(200).json({
-        success: true,
-        data: result
-      });
-    } catch (error) {
+    if (!driverId) {
       return res.status(400).json({
         success: false,
-        message:
-          error.message
+        message: 'driverId is required'
       });
     }
-  };
 
-/**
- * =========================================================
- * EVENING DROP
- * =========================================================
- */
+    const result = await rideService.resetTestCycle(driverId);
+    const io = req.app.get('io');
 
-exports.dropStudentHome =
-  async (
-    req,
-    res
-  ) => {
-    try {
-      const {
+    emitDriver(io, driverId, 'testCycleReset', {
+      driverId,
+      date: result.date,
+      nextRide: result.nextRide,
+      timestamp: Date.now()
+    });
+
+    for (const parentId of result.parentIds || []) {
+      emitParent(io, parentId, 'testCycleReset', {
         driverId,
-        parentId
-      } = req.body;
-
-      const result =
-        await rideService
-          .dropStudentHome(
-            driverId,
-            parentId
-          );
-
-      const io =
-        req.app.get('io');
-
-      emitParent(
-        io,
         parentId,
-        'studentStatusUpdated',
-        {
-          parentId,
-          driverId,
-          rideType:
-            'evening',
-          status:
-            'dropped_at_home',
-          timestamp:
-            result.timestamp
-        }
-      );
-
-      return res.status(200).json({
-        success: true,
-        data: result
+        date: result.date,
+        nextRide: result.nextRide,
+        timestamp: Date.now()
       });
-    } catch (error) {
-      return res.status(400).json({
-        success: false,
-        message:
-          error.message
+
+      emitParent(io, parentId, 'dashboardUpdated', {
+        type: 'test_cycle_reset',
+        driverId,
+        parentId,
+        nextRide: result.nextRide,
+        timestamp: Date.now()
       });
     }
-  };
+
+    return res.status(200).json({
+      success: true,
+      message: 'Test ride cycle reset. Driver can start the morning ride again.',
+      data: result
+    });
+  } catch (error) {
+    console.error('TEST RIDE RESET ERROR:', error);
+
+    return res.status(400).json({
+      success: false,
+      message: error.message || 'Unable to reset test ride cycle'
+    });
+  }
+};

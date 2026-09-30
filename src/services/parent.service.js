@@ -675,24 +675,16 @@ const getDashboard = async (parentId) => {
     driverId: parent.driverId
   });
 
-  const {
-    start: todayStart,
-    end: todayEnd
-  } = getTodayRange();
+  const todayStart = getStartOfToday();
+  const todayEnd = getEndOfToday();
 
-  // ---------------------------------------------------------
-  // TODAY ATTENDANCE
-  // ---------------------------------------------------------
-  const todayAttendanceRecords = await Attendance.find({
+  const todayAttendance = await Attendance.findOne({
     parentId: parent.parentId,
     date: {
       $gte: todayStart,
       $lt: todayEnd
     }
-  }).lean();
-
-  const todayAttendance =
-    pickLatestAttendanceRecord(todayAttendanceRecords);
+  }).sort({ date: -1 });
 
   const todayAttendanceStatus =
     todayAttendance?.status || 'not_marked';
@@ -700,95 +692,58 @@ const getDashboard = async (parentId) => {
   const isPresent =
     todayAttendanceStatus === 'present';
 
-  // ---------------------------------------------------------
-  // TOMORROW ATTENDANCE
-  // ---------------------------------------------------------
-  const {
-    start: tomorrowStart,
-    end: tomorrowEnd
-  } = getTomorrowRange();
+  const { start: tomorrowStart, end: tomorrowEnd } =
+    getTomorrowRange();
 
-  const tomorrowAttendanceRecords = await Attendance.find({
+  const tomorrowAttendance = await Attendance.findOne({
     parentId: parent.parentId,
     date: {
       $gte: tomorrowStart,
       $lt: tomorrowEnd
     }
-  }).lean();
-
-  const tomorrowAttendance =
-    pickLatestAttendanceRecord(tomorrowAttendanceRecords);
+  }).sort({ date: -1 });
 
   const tomorrowAttendanceStatus =
     tomorrowAttendance?.status || 'not_marked';
 
-  // ---------------------------------------------------------
-  // ACTIVE RIDE - SOURCE OF TRUTH
-  // ---------------------------------------------------------
-  const activeRide =
-    await getActiveRideForDriver(parent.driverId);
+  // -------------------------------------------------------
+  // CURRENT RIDE: active Ride document only.
+  // -------------------------------------------------------
+  const activeRide = await getActiveRideForDriver(
+    parent.driverId
+  );
 
-  const rideStarted =
-    Boolean(activeRide);
+  const rideStarted = Boolean(activeRide);
+  const rideStatus = activeRide?.status || null;
+  const rideId = activeRide?.rideId || null;
+  const rideStartTime = activeRide?.startTime || null;
+  const rideEndTime = activeRide?.endTime || null;
+  const rideType = activeRide?.rideType || null;
 
-  const rideStatus =
-    activeRide?.status || null;
+  // -------------------------------------------------------
+  // TODAY'S COMPLETION CONTEXT
+  // -------------------------------------------------------
+  const morningRide = await getLatestRideForDriver(
+    parent.driverId,
+    'morning'
+  );
 
-  const rideId =
-    activeRide?.rideId || null;
+  const eveningRide = await getLatestRideForDriver(
+    parent.driverId,
+    'evening'
+  );
 
-  const rideStartTime =
-    activeRide?.startTime || null;
+  const morningRideCompleted = Boolean(
+    morningRide &&
+    morningRide.status === 'ended' &&
+    parent.morningStatus === 'dropped_at_school'
+  );
 
-  const rideEndTime =
-    activeRide?.endTime || null;
-
-  /*
-   * IMPORTANT:
-   *
-   * rideType is ONLY the active ride type.
-   *
-   * If the driver has not started the evening ride,
-   * rideType MUST be null.
-   */
-  const rideType =
-    activeRide?.rideType || null;
-
-  // ---------------------------------------------------------
-  // TODAY'S LATEST MORNING / EVENING RIDES
-  // ---------------------------------------------------------
-  const morningRide =
-    await getLatestRideForDriver(
-      parent.driverId,
-      'morning'
-    );
-
-  const eveningRide =
-    await getLatestRideForDriver(
-      parent.driverId,
-      'evening'
-    );
-
-  // ---------------------------------------------------------
-  // EXPLICIT COMPLETION CONTEXT
-  // ---------------------------------------------------------
-  //
-  // A student status such as dropped_at_home is not enough.
-  // We also require a TODAY ended Ride of the matching type.
-  //
-  const morningRideCompleted =
-    Boolean(
-      morningRide &&
-      morningRide.status === 'ended' &&
-      parent.morningStatus === 'dropped_at_school'
-    );
-
-  const eveningRideCompleted =
-    Boolean(
-      eveningRide &&
-      eveningRide.status === 'ended' &&
-      parent.eveningStatus === 'dropped_at_home'
-    );
+  const eveningRideCompleted = Boolean(
+    eveningRide &&
+    eveningRide.status === 'ended' &&
+    parent.eveningStatus === 'dropped_at_home'
+  );
 
   let completedRideType = null;
 
@@ -798,42 +753,29 @@ const getDashboard = async (parentId) => {
     completedRideType = 'morning';
   }
 
-  /*
-   * The next ride is useful when the current active ride is null.
-   *
-   * After the morning journey has completed, the next journey
-   * is the return journey.
-   */
+  // -------------------------------------------------------
+  // NEXT RIDE
+  // -------------------------------------------------------
   let nextRideType = null;
 
   if (
     !rideStarted &&
     !eveningRideCompleted &&
-    parent.morningStatus === 'dropped_at_school' &&
-    parent.eveningStatus !== 'dropped_at_home'
+    morningRideCompleted
   ) {
     nextRideType = 'evening';
   } else if (
     !rideStarted &&
     !morningRideCompleted &&
-    parent.morningStatus !== 'dropped_at_school'
+    !eveningRideCompleted &&
+    !morningRide
   ) {
     nextRideType = 'morning';
   }
 
-  // ---------------------------------------------------------
-  // STUDENT STATUS
-  // ---------------------------------------------------------
-  //
-  // ACTIVE RIDE:
-  //   use the status belonging to that active ride.
-  //
-  // NO ACTIVE RIDE:
-  //   return a completed status ONLY when today's matching
-  //   ride has actually ended.
-  //
-  //   otherwise return the next/current pending state.
-  //
+  // -------------------------------------------------------
+  // RIDE-AWARE STUDENT STATUS
+  // -------------------------------------------------------
   let studentStatus = 'waiting';
 
   if (rideStarted && rideType === 'morning') {
@@ -841,28 +783,21 @@ const getDashboard = async (parentId) => {
       parent.morningStatus || 'waiting';
   } else if (rideStarted && rideType === 'evening') {
     studentStatus =
-      parent.eveningStatus || 'waiting_school_finish';
+      parent.eveningStatus ||
+      'waiting_school_finish';
   } else if (eveningRideCompleted) {
     studentStatus = 'dropped_at_home';
   } else if (morningRideCompleted) {
     studentStatus = 'dropped_at_school';
-  } else if (
-    nextRideType === 'evening'
-  ) {
-    /*
-     * This is the exact state shown in the driver screenshot:
-     *
-     * Return Journey -> READY
-     * Start Return has not been pressed.
-     */
+  } else if (nextRideType === 'evening') {
     studentStatus = 'waiting_school_finish';
   } else {
     studentStatus = 'waiting';
   }
 
-  // ---------------------------------------------------------
+  // -------------------------------------------------------
   // TRACKING
-  // ---------------------------------------------------------
+  // -------------------------------------------------------
   let trackingAvailable = false;
 
   if (
@@ -884,224 +819,124 @@ const getDashboard = async (parentId) => {
     }
   }
 
-  // ---------------------------------------------------------
-  // CURRENT RIDE MESSAGE
-  // ---------------------------------------------------------
+  // -------------------------------------------------------
+  // MESSAGE / DIRECTION
+  // -------------------------------------------------------
   let rideDirection = null;
-
-  let rideMessageTitle =
-    'No Active Ride';
-
+  let rideMessageTitle = 'No Active Ride';
   let rideMessage =
     'The school van is not currently on a trip.';
 
-  if (
-    rideStarted &&
-    rideType === 'morning'
-  ) {
-    rideDirection =
-      'Home → School';
-
-    rideMessageTitle =
-      'Morning Ride Started';
-
+  if (rideStarted && rideType === 'morning') {
+    rideDirection = 'Home → School';
+    rideMessageTitle = 'Morning Ride Started';
     rideMessage =
       'The van is heading to pick up your student.';
-  } else if (
-    rideStarted &&
-    rideType === 'evening'
-  ) {
-    rideDirection =
-      'School → Home';
-
-    rideMessageTitle =
-      'Return Trip Started';
-
+  } else if (rideStarted && rideType === 'evening') {
+    rideDirection = 'School → Home';
+    rideMessageTitle = 'Return Trip Started';
     rideMessage =
       'The van is heading to school to pick up your student.';
-  } else if (
-    nextRideType === 'evening'
-  ) {
-    rideDirection =
-      'School → Home';
-
-    rideMessageTitle =
-      'Return Ride Pending';
-
+  } else if (nextRideType === 'evening') {
+    rideDirection = 'School → Home';
+    rideMessageTitle = 'Return Ride Pending';
     rideMessage =
       'The driver has not started the return ride from school yet.';
-  } else if (
-    nextRideType === 'morning'
-  ) {
-    rideDirection =
-      'Home → School';
-
-    rideMessageTitle =
-      'Morning Ride Pending';
-
+  } else if (nextRideType === 'morning') {
+    rideDirection = 'Home → School';
+    rideMessageTitle = 'Morning Ride Pending';
     rideMessage =
       'The driver has not started the morning ride yet.';
-  } else if (
-    completedRideType === 'evening'
-  ) {
-    rideDirection =
-      'School → Home';
-
-    rideMessageTitle =
-      'Arrived Home';
-
-    rideMessage =
-      parent.eveningDroppedAtHomeAt
-        ? `Your student reached home at ${parent.eveningDroppedAtHomeAt}.`
-        : 'Your student has reached home safely.';
-  } else if (
-    completedRideType === 'morning'
-  ) {
-    rideDirection =
-      'Home → School';
-
-    rideMessageTitle =
-      'Arrived at School';
-
-    rideMessage =
-      parent.morningDroppedAtSchoolAt
-        ? `Your student reached school at ${parent.morningDroppedAtSchoolAt}.`
-        : 'Your student has reached school safely.';
+  } else if (completedRideType === 'evening') {
+    rideDirection = 'School → Home';
+    rideMessageTitle = 'Arrived Home';
+    rideMessage = parent.eveningDroppedAtHomeAt
+      ? `Your student reached home at ${parent.eveningDroppedAtHomeAt}.`
+      : 'Your student has reached home safely.';
+  } else if (completedRideType === 'morning') {
+    rideDirection = 'Home → School';
+    rideMessageTitle = 'Arrived at School';
+    rideMessage = parent.morningDroppedAtSchoolAt
+      ? `Your student reached school at ${parent.morningDroppedAtSchoolAt}.`
+      : 'Your student has reached school safely.';
   }
 
-  // ---------------------------------------------------------
-  // JOURNEY DURATIONS
-  // ---------------------------------------------------------
-  const morningJourneyDuration =
-    calculateDurationMinutes(
-      parent.morningPickedUpAt,
-      parent.morningDroppedAtSchoolAt
-    );
-
-  const eveningJourneyDuration =
-    calculateDurationMinutes(
-      parent.eveningPickedFromSchoolAt,
-      parent.eveningDroppedAtHomeAt
-    );
-
-  // ---------------------------------------------------------
-  // RETURN
-  // ---------------------------------------------------------
   return {
-    studentName:
-      parent.studentName,
+    studentName: parent.studentName,
+    schoolName: parent.schoolName,
+    pickupArea: parent.pickupArea,
+    dropArea: parent.dropArea,
 
-    schoolName:
-      parent.schoolName,
-
-    pickupArea:
-      parent.pickupArea,
-
-    dropArea:
-      parent.dropArea,
-
-    // TODAY ATTENDANCE
-    attendance:
-      isPresent,
-
+    attendance: isPresent,
     todayAttendanceStatus,
-
     todayAttendanceDate:
       todayAttendance?.date || null,
 
-    // TOMORROW ATTENDANCE
     tomorrowAttendanceStatus,
-
     tomorrowAttendanceDate:
       tomorrowAttendance?.date || null,
 
-    // RAW STUDENT STATUS FIELDS
     morningStatus:
-      parent.morningStatus,
-
+      parent.morningStatus || 'waiting',
     eveningStatus:
-      parent.eveningStatus,
+      parent.eveningStatus || 'waiting_school_finish',
 
-    /*
-     * IMPORTANT:
-     * studentStatus above is now ride-aware.
-     */
     studentStatus,
 
-    // AUTHORITATIVE CURRENT RIDE
     rideStarted,
-
     rideStatus,
-
     rideId,
-
     rideStartTime,
-
     rideEndTime,
-
     rideType,
-
     rideDirection,
-
     rideMessageTitle,
-
     rideMessage,
-
     trackingAvailable,
 
-    // COMPLETION / NEXT-RIDE CONTEXT
     completedRideType,
-
     lastCompletedRideType:
       completedRideType,
-
     lastCompletedRideId:
       completedRideType === 'evening'
         ? eveningRide?.rideId || null
         : completedRideType === 'morning'
           ? morningRide?.rideId || null
           : null,
-
     lastCompletedRideEndTime:
       completedRideType === 'evening'
         ? eveningRide?.endTime || null
         : completedRideType === 'morning'
           ? morningRide?.endTime || null
           : null,
-
     nextRideType,
 
-    // JOURNEY
     journeyTimes: {
       morningPickedUpAt:
         parent.morningPickedUpAt || null,
-
       morningDroppedAtSchoolAt:
         parent.morningDroppedAtSchoolAt || null,
-
       eveningPickedFromSchoolAt:
         parent.eveningPickedFromSchoolAt || null,
-
       eveningDroppedAtHomeAt:
         parent.eveningDroppedAtHomeAt || null,
-
       morningJourneyDurationMinutes:
-        morningJourneyDuration,
-
+        calculateDurationMinutes(
+          parent.morningPickedUpAt,
+          parent.morningDroppedAtSchoolAt
+        ),
       eveningJourneyDurationMinutes:
-        eveningJourneyDuration
+        calculateDurationMinutes(
+          parent.eveningPickedFromSchoolAt,
+          parent.eveningDroppedAtHomeAt
+        )
     },
 
     driver: driver
       ? {
-          driverId:
-            driver.driverId,
-
-          name:
-            driver.name,
-
-          mobileNumber:
-            driver.mobileNumber
+          driverId: driver.driverId,
+          name: driver.name,
+          mobileNumber: driver.mobileNumber
         }
       : null
   };
