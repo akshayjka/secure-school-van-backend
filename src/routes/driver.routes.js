@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-
+// const { protect } = require('../middleware/auth.middleware');
 const driverController = require('../controllers/driver.controller');
 
 router.post('/register', driverController.registerDriver);

@@ -1,11 +1,294 @@
 const driverService = require('../services/driver.service');
+const mongoose = require('mongoose');
 const Driver = require('../models/driver.model');
+const Parent = require('../models/parent.model');
 
 // ============================================================
 // FIND DRIVER
 // GET /api/drivers/find?driverId=DRV000001
 // GET /api/drivers/find?mobile=9876543210
 // ============================================================
+
+
+async function getAuthenticatedDriver(req) {
+  // Adapt this to the verified identity supplied by your auth middleware.
+  const driverId = req.user?.driverId;
+
+  if (!driverId) {
+    const error = new Error('Authenticated driver identity is missing');
+    error.statusCode = 401;
+    throw error;
+  }
+
+  const driver = await Driver.findOne({ driverId });
+
+  if (!driver) {
+    const error = new Error('Driver not found');
+    error.statusCode = 404;
+    throw error;
+  }
+
+  return driver;
+}
+
+function validatePendingDetails(body = {}) {
+  const parentName = String(body.parentName || '').trim();
+  const parentMobile = String(body.parentMobile || '').replace(/\D/g, '');
+
+  if (parentName.length < 2 || parentName.length > 100) {
+    return 'Enter a valid parent name';
+  }
+
+  if (!/^[6-9]\d{9}$/.test(parentMobile)) {
+    return 'Enter a valid 10-digit parent mobile number';
+  }
+
+  return null;
+}
+
+// GET /api/drivers/me/pending-students
+exports.getPendingStudents = async (req, res) => {
+  try {
+    const driver = await getAuthenticatedDriver(req);
+
+    const pendingStudents = driver.pendingStudents
+      .filter(item => item.status === 'pending')
+      .map(item => ({
+        _id: item._id,
+        parentName: item.parentName,
+        parentMobile: item.parentMobile,
+        studentName: item.studentName,
+        studentClass: item.studentClass,
+        studentSection: item.studentSection,
+        schoolName: item.schoolName,
+        pickupAddress: item.pickupAddress,
+        schoolAddress: item.schoolAddress,
+        updatedAt: item.updatedAt
+      }));
+
+    return res.json({
+      success: true,
+      count: pendingStudents.length,
+      data: pendingStudents
+    });
+  } catch (error) {
+    return res.status(error.statusCode || 500).json({
+      success: false,
+      message: error.message || 'Unable to load pending students'
+    });
+  }
+};
+
+// PUT /api/drivers/me/pending-students/:contactId
+exports.updatePendingStudent = async (req, res) => {
+  try {
+    const driver = await getAuthenticatedDriver(req);
+    const { contactId } = req.params;
+
+    if (!mongoose.isValidObjectId(contactId)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid pending student ID'
+      });
+    }
+
+    const entry = driver.pendingStudents.id(contactId);
+
+    if (!entry || entry.status !== 'pending') {
+      return res.status(404).json({
+        success: false,
+        message: 'Pending student not found'
+      });
+    }
+
+    const validationError = validatePendingDetails(req.body);
+
+    if (validationError) {
+      return res.status(400).json({
+        success: false,
+        message: validationError
+      });
+    }
+
+    // Explicit allowlist: never spread req.body into the model.
+    const allowedFields = [
+      'parentName',
+      'parentMobile',
+      'studentName',
+      'studentClass',
+      'studentSection',
+      'schoolName',
+      'pickupAddress',
+      'schoolAddress'
+    ];
+
+    for (const field of allowedFields) {
+      if (req.body[field] !== undefined) {
+        entry[field] = String(req.body[field]).trim();
+      }
+    }
+
+    entry.parentMobile = String(entry.parentMobile).replace(/\D/g, '');
+
+    await driver.save();
+
+    return res.json({
+      success: true,
+      message: 'Pending student updated',
+      data: entry
+    });
+  } catch (error) {
+    return res.status(error.statusCode || 500).json({
+      success: false,
+      message: error.message || 'Unable to update pending student'
+    });
+  }
+};
+
+// POST /api/drivers/me/pending-students/:contactId/complete
+exports.completePendingStudent = async (req, res) => {
+  try {
+    const driver = await getAuthenticatedDriver(req);
+    const { contactId } = req.params;
+
+    if (!mongoose.isValidObjectId(contactId)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid pending student ID'
+      });
+    }
+
+    const entry = driver.pendingStudents.id(contactId);
+
+    if (!entry || entry.status !== 'pending') {
+      return res.status(404).json({
+        success: false,
+        message: 'Pending student not found'
+      });
+    }
+
+    // Combine saved details with the latest form submission.
+    const data = {
+      parentName: req.body.parentName ?? entry.parentName,
+      parentMobile: req.body.parentMobile ?? entry.parentMobile,
+      studentName: req.body.studentName ?? entry.studentName,
+      studentClass: req.body.studentClass ?? entry.studentClass,
+      studentSection: req.body.studentSection ?? entry.studentSection,
+      schoolName: req.body.schoolName ?? entry.schoolName,
+      pickupAddress: req.body.pickupAddress ?? entry.pickupAddress,
+      schoolAddress: req.body.schoolAddress ?? entry.schoolAddress,
+      pickupLocation: req.body.pickupLocation,
+      schoolLocation: req.body.schoolLocation
+    };
+
+    const validationError = validatePendingDetails(data);
+
+    if (validationError) {
+      return res.status(400).json({
+        success: false,
+        message: validationError
+      });
+    }
+
+    const requiredText = [
+      ['studentName', 'Student name'],
+      ['studentClass', 'Student class'],
+      ['studentSection', 'Student section'],
+      ['schoolName', 'School name'],
+      ['pickupAddress', 'Pickup address'],
+      ['schoolAddress', 'School address']
+    ];
+
+    for (const [field, label] of requiredText) {
+      if (!String(data[field] || '').trim()) {
+        return res.status(400).json({
+          success: false,
+          message: `${label} is required`
+        });
+      }
+    }
+
+    function validLocation(location) {
+      return location &&
+        Number.isFinite(Number(location.latitude)) &&
+        Number.isFinite(Number(location.longitude)) &&
+        Number(location.latitude) >= -90 &&
+        Number(location.latitude) <= 90 &&
+        Number(location.longitude) >= -180 &&
+        Number(location.longitude) <= 180;
+    }
+
+    if (
+      !validLocation(data.pickupLocation) ||
+      !validLocation(data.schoolLocation)
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: 'Valid pickup and school map coordinates are required'
+      });
+    }
+
+    const mobileNumber = String(data.parentMobile).replace(/\D/g, '');
+
+    const existingParent = await Parent.findOne({ mobileNumber });
+
+    if (existingParent) {
+      return res.status(409).json({
+        success: false,
+        message: 'A parent account already exists with this mobile number'
+      });
+    }
+
+    const parent = await Parent.create({
+      parentId: `PAR${Date.now()}`,
+      driverId: driver.driverId,
+      name: String(data.parentName).trim(),
+      mobileNumber,
+      studentName: String(data.studentName).trim(),
+      studentClass: String(data.studentClass).trim(),
+      studentSection: String(data.studentSection).trim(),
+      schoolName: String(data.schoolName).trim(),
+      pickupArea: String(data.pickupAddress).trim(),
+      pickupAddress: String(data.pickupAddress).trim(),
+      pickupLocation: {
+        latitude: Number(data.pickupLocation.latitude),
+        longitude: Number(data.pickupLocation.longitude)
+      },
+      dropArea: String(data.schoolAddress).trim(),
+      schoolAddress: String(data.schoolAddress).trim(),
+      schoolLocation: {
+        latitude: Number(data.schoolLocation.latitude),
+        longitude: Number(data.schoolLocation.longitude)
+      }
+    });
+
+    entry.status = 'completed';
+    entry.parentId = parent._id;
+    await driver.save();
+
+    return res.status(201).json({
+      success: true,
+      message: 'Student and parent registration completed',
+      data: {
+        parentId: parent.parentId,
+        studentName: parent.studentName
+      }
+    });
+  } catch (error) {
+    // Duplicate mobile number / other unique index conflicts.
+    if (error.code === 11000) {
+      return res.status(409).json({
+        success: false,
+        message: 'A record already exists with this unique value'
+      });
+    }
+
+    return res.status(error.statusCode || 500).json({
+      success: false,
+      message: error.message || 'Unable to complete registration'
+    });
+  }
+};
 
 const findDriver = async (req, res) => {
     try {
