@@ -319,221 +319,141 @@ const assertAllReturnStudentsDropped = async driverId => {
  */
 
 exports.startRide = async (driverId, rideType) => {
-
-  if (!driverId) throw new Error('driverId is required');
+  if (!driverId) {
+    throw new Error('driverId is required');
+  }
 
   validateRideType(rideType);
 
+  const now = new Date();
+  const rideDate = getBusinessDate(now);
 
-
-  // Never allow a second ride of the same type on the same day.
-
-  const existingRide = await getTodayRide(driverId, rideType);
-
-
+  const existingRide = await Ride.findOne({
+    driverId,
+    rideType,
+    rideDate,
+    status: 'started'
+  }).sort({
+    startTime: -1
+  });
 
   if (existingRide) {
-
-    if (existingRide.status === 'started') {
-
-      return {
-
-        ride: existingRide,
-
-        alreadyStarted: true
-
-      };
-
-    }
-
-
-
-    throw new Error(
-
-      `${rideType === 'morning' ? 'Morning' : 'Return'} ride has already been completed today`
-
-    );
-
+    return {
+      ride: existingRide,
+      alreadyStarted: true
+    };
   }
-
-
-
-  // Only one ride can be active at a time.
 
   const activeRide = await Ride.findOne({
-
     driverId,
-
     status: 'started'
-
-  }).sort({ startTime: -1 });
-
-
+  }).sort({
+    startTime: -1
+  });
 
   if (activeRide) {
-
     throw new Error(
-
       `Cannot start ${rideType} ride while ${activeRide.rideType} ride ${activeRide.rideId} is active`
-
     );
-
   }
-
-
 
   const students = await getTodayPresentStudents(driverId);
 
-
-
   if (students.length === 0) {
-
     throw new Error('No present students available for this ride');
-
   }
-
-
 
   if (rideType === 'evening') {
-
     await assertMorningCompletedBeforeReturn(driverId);
-
   }
 
+  const previousRide = await Ride.findOne({
+    driverId,
+    rideType,
+    rideDate
+  }).sort({
+    cycleNumber: -1,
+    startTime: -1
+  });
 
+  const cycleNumber = previousRide
+    ? previousRide.cycleNumber + 1
+    : 1;
 
   const rideCount = await Ride.countDocuments();
 
-  const now = new Date();
-
-  const rideDate = getBusinessDate(now);
-
-
+  const rideId = `RIDE${String(rideCount + 1).padStart(6, '0')}`;
 
   let ride;
 
-
-
   try {
-
     ride = await Ride.create({
-
-      rideId: `RIDE${String(rideCount + 1).padStart(6, '0')}`,
-
+      rideId,
       driverId,
-
       rideType,
-
       rideDate,
-
+      cycleNumber,
       status: 'started',
-
       startTime: now,
-
       locations: []
-
     });
-
   } catch (error) {
-
-    // Concurrent start requests can race the application-level check.
-
-    // The sparse unique index is the final guard.
-
-    if (error?.code === 11000 && error?.keyPattern?.rideDate) {
-
+    if (error?.code === 11000) {
       const concurrentRide = await Ride.findOne({
-
         driverId,
-
         rideType,
+        rideDate,
+        status: 'started'
+      }).sort({
+        startTime: -1
+      });
 
-        rideDate
-
-      }).sort({ startTime: -1 });
-
-
-
-      if (concurrentRide?.status === 'started') {
-
-        return { ride: concurrentRide, alreadyStarted: true };
-
+      if (concurrentRide) {
+        return {
+          ride: concurrentRide,
+          alreadyStarted: true
+        };
       }
-
     }
 
-
-
     throw error;
-
   }
-
-
-
-  // A status reset is allowed ONLY when creating the first ride
-
-  // of the day. Since duplicate rides are blocked above, this
-
-  // cannot overwrite a completed journey.
 
   if (rideType === 'morning') {
-
     await Parent.updateMany(
-
-      { driverId, attendance: true },
-
       {
-
+        driverId,
+        attendance: true
+      },
+      {
         $set: {
-
           morningStatus: 'waiting',
-
           morningPickedUpAt: null,
-
           morningDroppedAtSchoolAt: null
-
         }
-
       }
-
     );
-
   } else {
-
     await Parent.updateMany(
-
-      { driverId, attendance: true },
-
       {
-
+        driverId,
+        attendance: true
+      },
+      {
         $set: {
-
           eveningStatus: 'waiting_school_finish',
-
           eveningPickedFromSchoolAt: null,
-
           eveningDroppedAtHomeAt: null
-
         }
-
       }
-
     );
-
   }
 
-
-
   return {
-
     ride,
-
     alreadyStarted: false
-
   };
-
 };
-
 
 
 /**
