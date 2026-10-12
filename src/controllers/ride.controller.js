@@ -922,25 +922,14 @@ exports.resetTestCycle = async (req, res) => {
   try {
 
     const enabled =
-
-      process.env.NODE_ENV !== 'production' &&
-
-      process.env.ENABLE_RIDE_TEST_RESET !== 'false';
-
-
+      process.env.ENABLE_RIDE_CYCLE_RESTART === 'true';
 
     if (!enabled) {
-
       return res.status(404).json({
-
         success: false,
-
-        message: 'Test ride reset is disabled'
-
+        message: 'Ride cycle restart is disabled'
       });
-
     }
-
 
 
     const { driverId } = req.body || {};

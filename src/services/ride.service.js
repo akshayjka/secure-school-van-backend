@@ -3,7 +3,7 @@ const Ride = require('../models/ride.model');
 const Parent = require('../models/parent.model');
 
 const StudentJourney = require('../models/studentjourney.model');
-
+const crypto = require('crypto');
 
 
 /**
@@ -74,29 +74,43 @@ const validateRideType = rideType => {
 
 
 
-const getTodayRide = async (driverId, rideType, status) => {
 
+const getTodayRide = async (
+  driverId,
+  rideType,
+  status,
+  cycleNumber
+) => {
   const { start, end } = getTodayRange();
 
   const query = {
-
     driverId,
-
     rideType,
-
     startTime: { $gte: start, $lt: end }
-
   };
 
+  if (status) {
+    query.status = status;
+  }
 
-
-  if (status) query.status = status;
-
-
+  if (cycleNumber != null) {
+    query.cycleNumber = cycleNumber;
+  }
 
   return Ride.findOne(query).sort({ startTime: -1 });
-
 };
+
+
+
+const getLatestTodayRide = async driverId => {
+  const { start, end } = getTodayRange();
+
+  return Ride.findOne({
+    driverId,
+    startTime: { $gte: start, $lt: end }
+  }).sort({ startTime: -1 });
+};
+
 
 
 
@@ -139,100 +153,76 @@ const ensureActiveRide = async (driverId, rideType) => {
 };
 
 
-
-const getOrCreateStudentJourney = async (parent, date) => {
+const getOrCreateStudentJourney = async (
+  parent,
+  date,
+  cycleNumber
+) => {
+  const journeyDate = getJourneyDate(date);
+  const normalizedCycle = Number(cycleNumber || 1);
 
   return StudentJourney.findOneAndUpdate(
-
     {
-
       parentId: parent.parentId,
-
-      date: getJourneyDate(date)
-
+      date: journeyDate,
+      cycleNumber: normalizedCycle
     },
-
     {
-
       $setOnInsert: {
-
         parentId: parent.parentId,
-
         driverId: parent.driverId,
-
         studentName: parent.studentName,
-
-        date: getJourneyDate(date)
-
+        date: journeyDate,
+        cycleNumber: normalizedCycle
       }
-
     },
-
     {
-
       new: true,
-
       upsert: true,
-
       setDefaultsOnInsert: true
-
     }
-
   );
-
 };
 
 
-
-const assertMorningCompletedBeforeReturn = async driverId => {
-
-  const morningRide = await getTodayRide(driverId, 'morning');
-
-
+const assertMorningCompletedBeforeReturn = async (
+  driverId,
+  cycleNumber
+) => {
+  const morningRide = await getTodayRide(
+    driverId,
+    'morning',
+    undefined,
+    cycleNumber
+  );
 
   if (!morningRide || morningRide.status !== 'ended') {
-
-    throw new Error('Morning ride must be completed before starting the return ride');
-
+    throw new Error(
+      'Morning ride must be completed before starting the return ride'
+    );
   }
-
-
 
   const students = await getTodayPresentStudents(driverId);
 
-
-
   if (students.length === 0) {
-
-    throw new Error('No present students are available for the return ride');
-
+    throw new Error(
+      'No present students are available for the return ride'
+    );
   }
-
-
 
   const incomplete = students.filter(
-
     student => student.morningStatus !== 'dropped_at_school'
-
   );
 
-
-
   if (incomplete.length > 0) {
-
     throw new Error(
-
       `Complete school drop-off for all present students before starting the return ride. ${incomplete.length} student(s) remaining.`
-
     );
-
   }
 
-
-
   return { morningRide, students };
-
 };
+
 
 
 
@@ -318,6 +308,9 @@ const assertAllReturnStudentsDropped = async driverId => {
 
  */
 
+
+// const crypto = require('crypto');
+
 exports.startRide = async (driverId, rideType) => {
   if (!driverId) {
     throw new Error('driverId is required');
@@ -325,36 +318,72 @@ exports.startRide = async (driverId, rideType) => {
 
   validateRideType(rideType);
 
-  const now = new Date();
-  const rideDate = getBusinessDate(now);
+  const { start, end } = getTodayRange();
 
-  const existingRide = await Ride.findOne({
-    driverId,
-    rideType,
-    rideDate,
-    status: 'started'
-  }).sort({
-    startTime: -1
-  });
-
-  if (existingRide) {
-    return {
-      ride: existingRide,
-      alreadyStarted: true
-    };
-  }
-
+  // Never allow overlapping active rides.
   const activeRide = await Ride.findOne({
     driverId,
-    status: 'started'
-  }).sort({
-    startTime: -1
-  });
+    status: 'started',
+    startTime: { $gte: start, $lt: end }
+  }).sort({ startTime: -1 });
 
   if (activeRide) {
+    if (activeRide.rideType === rideType) {
+      return {
+        ride: activeRide,
+        alreadyStarted: true
+      };
+    }
+
     throw new Error(
-      `Cannot start ${rideType} ride while ${activeRide.rideType} ride ${activeRide.rideId} is active`
+      `Cannot start ${rideType} ride while ${activeRide.rideType} ride is active`
     );
+  }
+
+  const latestRide = await getLatestTodayRide(driverId);
+  let cycleNumber = 1;
+
+  if (!latestRide) {
+    if (rideType !== 'morning') {
+      throw new Error(
+        'Start the morning ride before the return ride'
+      );
+    }
+  } else {
+    const previousCycle = latestRide.cycleNumber || 1;
+
+    if (latestRide.rideType === 'morning') {
+      if (latestRide.status !== 'ended') {
+        throw new Error('Complete the morning ride first');
+      }
+
+      if (rideType !== 'evening') {
+        throw new Error(
+          'Complete the return ride before starting another cycle'
+        );
+      }
+
+      cycleNumber = previousCycle;
+
+      await assertMorningCompletedBeforeReturn(
+        driverId,
+        cycleNumber
+      );
+    } else {
+      if (latestRide.status !== 'ended') {
+        throw new Error('Complete the return ride first');
+      }
+
+      if (rideType !== 'morning') {
+        throw new Error(
+          'Start the next cycle with the morning ride'
+        );
+      }
+
+      await assertAllReturnStudentsDropped(driverId);
+
+      cycleNumber = previousCycle + 1;
+    }
   }
 
   const students = await getTodayPresentStudents(driverId);
@@ -363,32 +392,32 @@ exports.startRide = async (driverId, rideType) => {
     throw new Error('No present students available for this ride');
   }
 
-  if (rideType === 'evening') {
-    await assertMorningCompletedBeforeReturn(driverId);
+  const now = new Date();
+  const rideDate = getBusinessDate(now);
+
+  // Reset live Parent status only for a new morning cycle.
+  // Historical Ride and StudentJourney records remain untouched.
+  if (rideType === 'morning' && cycleNumber > 1) {
+    await Parent.updateMany(
+      { driverId, attendance: true },
+      {
+        $set: {
+          morningStatus: 'waiting',
+          morningPickedUpAt: null,
+          morningDroppedAtSchoolAt: null,
+          eveningStatus: 'waiting_school_finish',
+          eveningPickedFromSchoolAt: null,
+          eveningDroppedAtHomeAt: null
+        }
+      }
+    );
   }
-
-  const previousRide = await Ride.findOne({
-    driverId,
-    rideType,
-    rideDate
-  }).sort({
-    cycleNumber: -1,
-    startTime: -1
-  });
-
-  const cycleNumber = previousRide
-    ? previousRide.cycleNumber + 1
-    : 1;
-
-  const rideCount = await Ride.countDocuments();
-
-  const rideId = `RIDE${String(rideCount + 1).padStart(6, '0')}`;
 
   let ride;
 
   try {
     ride = await Ride.create({
-      rideId,
+      rideId: `RIDE-${crypto.randomUUID()}`,
       driverId,
       rideType,
       rideDate,
@@ -403,12 +432,10 @@ exports.startRide = async (driverId, rideType) => {
         driverId,
         rideType,
         rideDate,
-        status: 'started'
-      }).sort({
-        startTime: -1
-      });
+        cycleNumber
+      }).sort({ startTime: -1 });
 
-      if (concurrentRide) {
+      if (concurrentRide?.status === 'started') {
         return {
           ride: concurrentRide,
           alreadyStarted: true
@@ -417,36 +444,6 @@ exports.startRide = async (driverId, rideType) => {
     }
 
     throw error;
-  }
-
-  if (rideType === 'morning') {
-    await Parent.updateMany(
-      {
-        driverId,
-        attendance: true
-      },
-      {
-        $set: {
-          morningStatus: 'waiting',
-          morningPickedUpAt: null,
-          morningDroppedAtSchoolAt: null
-        }
-      }
-    );
-  } else {
-    await Parent.updateMany(
-      {
-        driverId,
-        attendance: true
-      },
-      {
-        $set: {
-          eveningStatus: 'waiting_school_finish',
-          eveningPickedFromSchoolAt: null,
-          eveningDroppedAtHomeAt: null
-        }
-      }
-    );
   }
 
   return {
@@ -749,7 +746,11 @@ exports.pickStudentMorning = async (driverId, parentId) => {
 
 
 
-  const journey = await getOrCreateStudentJourney(parent, now);
+  const journey = await getOrCreateStudentJourney(
+    parent,
+    now,
+    ride.cycleNumber || 1
+  );
 
   journey.morning.pickedUpAt = now;
 
@@ -826,8 +827,11 @@ exports.dropStudentSchool = async (driverId, parentId) => {
   }
 
 
-
-  const journey = await getOrCreateStudentJourney(parent, now);
+const journey = await getOrCreateStudentJourney(
+  parent,
+  now,
+  ride.cycleNumber || 1
+);
 
   journey.morning.droppedAtSchoolAt = now;
 
@@ -1030,8 +1034,14 @@ exports.getStudentJourneyReport = async (parentId, date) => {
   if (!parent) throw new Error('Parent not found');
 
 
+const journeys = await StudentJourney.find({
+  parentId,
+  date
+}).sort({
+  cycleNumber: -1
+});
 
-  const journey = await StudentJourney.findOne({ parentId, date });
+const journey = journeys[0] || null;
 
 
 
@@ -1109,164 +1119,55 @@ module.exports.getTodayRange = getTodayRange;
 
  */
 
+
 exports.resetTestCycle = async driverId => {
-
   if (!driverId) {
-
     throw new Error('driverId is required');
-
   }
 
+  const latestRide = await getLatestTodayRide(driverId);
 
+  if (
+    !latestRide ||
+    latestRide.rideType !== 'evening' ||
+    latestRide.status !== 'ended'
+  ) {
+    throw new Error(
+      'Complete the morning and evening rides before starting another cycle'
+    );
+  }
 
-  const { start, end } = getTodayRange();
+  await assertAllReturnStudentsDropped(driverId);
 
-
-
-  // TEST MODE ONLY.
-
-  // This endpoint intentionally recovers stale/inconsistent test state.
-
-  // It must never be enabled in production.
-
-
-
-  const ridesToday = await Ride.find({
-
-    driverId,
-
-    startTime: { $gte: start, $lt: end }
-
-  }).select({
-
-    rideId: 1,
-
-    rideType: 1,
-
-    status: 1
-
-  });
-
-
-
-  const parents = await Parent.find({
-
-    driverId
-
-  }).select({
-
-    parentId: 1
-
-  });
-
-
-
-  const parentIds = parents
-
-    .map(parent => parent.parentId)
-
-    .filter(Boolean);
-
-
-
-  // IMPORTANT: do NOT reject an active/stale ride here.
-
-  // The purpose of this testing endpoint is to clean up exactly that case.
-
-  const rideDeleteResult = await Ride.deleteMany({
-
-    driverId,
-
-    startTime: { $gte: start, $lt: end }
-
-  });
-
-
-
-  const journeyDeleteResult = await StudentJourney.deleteMany({
-
-    driverId,
-
-    date: getJourneyDate(new Date())
-
-  });
-
-
-
-  // Attendance is preserved. Only today's journey state is reset.
-
-  const parentResetResult = await Parent.updateMany(
-
+  const parents = await Parent.find(
     { driverId },
+    { parentId: 1, _id: 0 }
+  ).lean();
 
+  // Keep all Ride and StudentJourney history.
+  // Reset only the current operational status.
+  await Parent.updateMany(
+    { driverId, attendance: true },
     {
-
       $set: {
-
         morningStatus: 'waiting',
-
         morningPickedUpAt: null,
-
         morningDroppedAtSchoolAt: null,
-
         eveningStatus: 'waiting_school_finish',
-
         eveningPickedFromSchoolAt: null,
-
         eveningDroppedAtHomeAt: null
-
       }
-
     }
-
   );
 
-
-
   return {
-
     driverId,
-
-    date: getBusinessDate(new Date()),
-
+    date: getBusinessDate(),
     reset: true,
-
-    forceReset: true,
-
-    parentIds,
-
-    previousRides: ridesToday.map(ride => ({
-
-      rideId: ride.rideId,
-
-      rideType: ride.rideType,
-
-      status: ride.status
-
-    })),
-
-    studentsReset:
-
-      parentResetResult.modifiedCount ??
-
-      parentResetResult.nModified ??
-
-      0,
-
-    ridesDeleted:
-
-      rideDeleteResult.deletedCount ??
-
-      0,
-
-    journeysDeleted:
-
-      journeyDeleteResult.deletedCount ??
-
-      0,
-
-    nextRide: 'morning'
-
+    nextRide: 'morning',
+    nextCycleNumber: (latestRide.cycleNumber || 1) + 1,
+    parentIds: parents
+      .map(parent => parent.parentId)
+      .filter(Boolean)
   };
-
 };

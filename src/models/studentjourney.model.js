@@ -1,3 +1,4 @@
+
 const mongoose = require('mongoose');
 
 const studentJourneySchema = new mongoose.Schema(
@@ -7,43 +8,42 @@ const studentJourneySchema = new mongoose.Schema(
       required: true,
       index: true
     },
-
     driverId: {
       type: String,
       required: true,
       index: true
     },
-
     studentName: {
       type: String,
       required: true
     },
-
-    // YYYY-MM-DD
+    // School-local business date in YYYY-MM-DD format.
     date: {
       type: String,
       required: true,
       index: true
     },
-
+    cycleNumber: {
+      type: Number,
+      required: true,
+      default: 1,
+      min: 1
+    },
     morning: {
       pickedUpAt: {
         type: Date,
         default: null
       },
-
       droppedAtSchoolAt: {
         type: Date,
         default: null
       }
     },
-
     evening: {
       pickedFromSchoolAt: {
         type: Date,
         default: null
       },
-
       droppedAtHomeAt: {
         type: Date,
         default: null
@@ -55,14 +55,15 @@ const studentJourneySchema = new mongoose.Schema(
   }
 );
 
-// One student can have only one daily report.
 studentJourneySchema.index(
   {
     parentId: 1,
-    date: 1
+    date: 1,
+    cycleNumber: 1
   },
   {
-    unique: true
+    unique: true,
+    name: 'uniq_parent_date_cycle'
   }
 );
 
