@@ -311,6 +311,7 @@ const assertAllReturnStudentsDropped = async driverId => {
 
 // const crypto = require('crypto');
 
+
 exports.startRide = async (driverId, rideType) => {
   if (!driverId) {
     throw new Error('driverId is required');
@@ -318,11 +319,12 @@ exports.startRide = async (driverId, rideType) => {
 
   validateRideType(rideType);
 
+  const normalizedDriverId = String(driverId).trim();
   const { start, end } = getTodayRange();
 
-  // Never allow overlapping active rides.
+  // 1. Never allow overlapping active rides.
   const activeRide = await Ride.findOne({
-    driverId,
+    driverId: normalizedDriverId,
     status: 'started',
     startTime: { $gte: start, $lt: end }
   }).sort({ startTime: -1 });
@@ -340,14 +342,13 @@ exports.startRide = async (driverId, rideType) => {
     );
   }
 
-  const latestRide = await getLatestTodayRide(driverId);
+  // 2. Validate ride order and determine the cycle.
+  const latestRide = await getLatestTodayRide(normalizedDriverId);
   let cycleNumber = 1;
 
   if (!latestRide) {
     if (rideType !== 'morning') {
-      throw new Error(
-        'Start the morning ride before the return ride'
-      );
+      throw new Error('Start the morning ride before the return ride');
     }
   } else {
     const previousCycle = latestRide.cycleNumber || 1;
@@ -366,7 +367,7 @@ exports.startRide = async (driverId, rideType) => {
       cycleNumber = previousCycle;
 
       await assertMorningCompletedBeforeReturn(
-        driverId,
+        normalizedDriverId,
         cycleNumber
       );
     } else {
@@ -380,29 +381,15 @@ exports.startRide = async (driverId, rideType) => {
         );
       }
 
-
-      // Reset only for a genuinely new ride.
-await resetStudentStatusesForRide(driverId, rideType);
-
-// Create the new ride.
-const ride = await Ride.create({
-  rideId: `RIDE-${crypto.randomUUID()}`,
-  driverId,
-  rideType,
-  rideDate: now,
-  cycleNumber,
-  status: 'started',
-  startTime: now,
-  locations: []
-});
-
-      await assertAllReturnStudentsDropped(driverId);
+      // Validate the previous return cycle before resetting.
+      await assertAllReturnStudentsDropped(normalizedDriverId);
 
       cycleNumber = previousCycle + 1;
     }
   }
 
-  const students = await getTodayPresentStudents(driverId);
+  // 3. Ensure present students exist before modifying their statuses.
+  const students = await getTodayPresentStudents(normalizedDriverId);
 
   if (students.length === 0) {
     throw new Error('No present students available for this ride');
@@ -411,11 +398,14 @@ const ride = await Ride.create({
   const now = new Date();
   const rideDate = getBusinessDate(now);
 
-  // Reset live Parent status only for a new morning cycle.
-  // Historical Ride and StudentJourney records remain untouched.
-  if (rideType === 'morning' && cycleNumber > 1) {
+  // 4. Reset the live operational statuses for the new ride.
+  // Historical Ride and StudentJourney records are not deleted.
+  if (rideType === 'morning') {
     await Parent.updateMany(
-      { driverId, attendance: true },
+      {
+        driverId: normalizedDriverId,
+        attendance: true
+      },
       {
         $set: {
           morningStatus: 'waiting',
@@ -427,14 +417,29 @@ const ride = await Ride.create({
         }
       }
     );
+  } else {
+    await Parent.updateMany(
+      {
+        driverId: normalizedDriverId,
+        attendance: true
+      },
+      {
+        $set: {
+          eveningStatus: 'waiting_school_finish',
+          eveningPickedFromSchoolAt: null,
+          eveningDroppedAtHomeAt: null
+        }
+      }
+    );
   }
 
+  // 5. Create exactly one ride.
   let ride;
 
   try {
     ride = await Ride.create({
       rideId: `RIDE-${crypto.randomUUID()}`,
-      driverId,
+      driverId: normalizedDriverId,
       rideType,
       rideDate,
       cycleNumber,
@@ -443,15 +448,15 @@ const ride = await Ride.create({
       locations: []
     });
   } catch (error) {
+    // Do not silently ignore other database errors.
     if (error?.code === 11000) {
       const concurrentRide = await Ride.findOne({
-        driverId,
-        rideType,
-        rideDate,
-        cycleNumber
+        driverId: normalizedDriverId,
+        status: 'started',
+        startTime: { $gte: start, $lt: end }
       }).sort({ startTime: -1 });
 
-      if (concurrentRide?.status === 'started') {
+      if (concurrentRide) {
         return {
           ride: concurrentRide,
           alreadyStarted: true
@@ -467,6 +472,7 @@ const ride = await Ride.create({
     alreadyStarted: false
   };
 };
+
 
 
 /**
