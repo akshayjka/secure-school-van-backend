@@ -380,6 +380,22 @@ exports.startRide = async (driverId, rideType) => {
         );
       }
 
+
+      // Reset only for a genuinely new ride.
+await resetStudentStatusesForRide(driverId, rideType);
+
+// Create the new ride.
+const ride = await Ride.create({
+  rideId: `RIDE-${crypto.randomUUID()}`,
+  driverId,
+  rideType,
+  rideDate: now,
+  cycleNumber,
+  status: 'started',
+  startTime: now,
+  locations: []
+});
+
       await assertAllReturnStudentsDropped(driverId);
 
       cycleNumber = previousCycle + 1;
@@ -1004,7 +1020,40 @@ exports.dropStudentHome = async (driverId, parentId) => {
 };
 
 
+async function resetStudentStatusesForRide(driverId, rideType) {
+  const filter = {
+    driverId,
+    attendance: true
+  };
 
+  if (rideType === 'morning') {
+    // New morning journey: reset both directions for this cycle.
+    await Parent.updateMany(filter, {
+      $set: {
+        morningStatus: 'waiting',
+        morningPickedUpAt: null,
+        morningDroppedAtSchoolAt: null,
+
+        eveningStatus: 'waiting_school_finish',
+        eveningPickedFromSchoolAt: null,
+        eveningDroppedAtHomeAt: null
+      }
+    });
+
+    return;
+  }
+
+  if (rideType === 'evening') {
+    // Preserve morning completion; reset only the return journey.
+    await Parent.updateMany(filter, {
+      $set: {
+        eveningStatus: 'waiting_school_finish',
+        eveningPickedFromSchoolAt: null,
+        eveningDroppedAtHomeAt: null
+      }
+    });
+  }
+}
 /**
 
  * =========================================================
